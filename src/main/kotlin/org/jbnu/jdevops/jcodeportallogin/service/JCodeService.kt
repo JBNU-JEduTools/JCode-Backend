@@ -39,26 +39,26 @@ class JCodeService(
         val user = userRepository.findByEmail(email)
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "User not found")
 
-        val userCourse = userCoursesRepository.findByUserIdAndCourseId(user.id, course.id)
-            ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "UserCourse not found")
+        val targetUser = userRepository.findByEmail(userEmail)
+            ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "TargetUser not found")
+        val targetUserCourse = userCoursesRepository.findByUserIdAndCourseId(targetUser.id, course.id)
+            ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "TargetUserCourse not found")
 
         // 이미 JCode가 존재하는지 확인
-        val storedJcode = jCodeRepository.findByUserIdAndCourseIdAndSnapshot(user.id, course.id, snapshot)
+        val storedJcode = jCodeRepository.findByUserIdAndCourseIdAndSnapshot(targetUser.id, course.id, snapshot)
         if (storedJcode != null) {
             throw ResponseStatusException(HttpStatus.FORBIDDEN, "Jcode already exists")
         }
 
-        // 생성하려는 jcode의 주체가 현재 요청한 주체와 다를 경우 생성 불가 (ADMIN은 전부 가능)
-        if (user.role != RoleType.ADMIN && user.email != userEmail) {
-            throw ResponseStatusException(HttpStatus.FORBIDDEN, "User role not allowed")
-        }
+        // 생성하려는 jcode 주체의 권한 검증
+        AuthorizationUtil.validateUserAuthority(user.role, user.id, targetUser.id, course.id, userCoursesRepository)
 
         // snapshot 권한 확인 (targetUserId를 0으로 둬서 자기 자신의 스냅샷도 열람 못하게 설정)
-        var deployment_name = "jcode-${course.code.lowercase()}-${course.clss}-${user.studentNum}"
-        var file_path = "workspace/${course.code.lowercase()}-${course.clss}-${user.studentNum}"
+        var deployment_name = "jcode-${course.code.lowercase()}-${course.clss}-${targetUser.studentNum}"
+        var file_path = "workspace/${course.code.lowercase()}-${course.clss}-${targetUser.studentNum}"
         if (snapshot) {
             AuthorizationUtil.validateUserAuthority(user.role, user.id, 0, course.id, userCoursesRepository)
-            deployment_name = "jcode-snapshot-${course.code.lowercase()}-${user.studentNum}"
+            deployment_name = "jcode-snapshot-${course.code.lowercase()}-${targetUser.studentNum}"
             file_path = "${course.code.lowercase()}-${course.clss}"
         }
         val app_label = deployment_name
@@ -69,7 +69,7 @@ class JCodeService(
             service_name = deployment_name + "-svc",
             app_label = app_label,
             file_path = file_path,
-            student_num = user.studentNum.toString(),
+            student_num = targetUser.studentNum.toString(),
             use_vnc = course.vnc,
             use_snapshot = snapshot
         )
@@ -97,8 +97,8 @@ class JCodeService(
             Jcode(
                 jcodeUrl = externalJcodeDto.jcodeUrl,
                 course = course,
-                user = user,
-                userCourse = userCourse,
+                user = targetUser,
+                userCourse = targetUserCourse,
                 snapshot = snapshot,
             )
         )
@@ -123,10 +123,16 @@ class JCodeService(
         val jCode = jCodeRepository.findByUserIdAndCourseIdAndSnapshot(user.id, course.id, snapshot)
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "JCode not found for the specified user and course")
 
+        // snapshot 확인
+        var deployment_name = "jcode-${course.code.lowercase()}-${course.clss}-${user.studentNum}"
+        if (snapshot) {
+            deployment_name = "jcode-snapshot-${course.code.lowercase()}-${user.studentNum}"
+        }
+
         val jcodeRequestBody = JCodeDeleteRequestDto (
             namespace = "jcode-${course.code.lowercase()}-${course.clss}",
-            deployment_name = "jcode-${course.code.lowercase()}-${course.clss}-${user.studentNum}",
-            service_name = "jcode-${course.code.lowercase()}-${course.clss}-${user.studentNum}-svc"
+            deployment_name = deployment_name,
+            service_name = deployment_name + "-svc"
         )
 
         // 외부 API 호출: 쿠버네티스에 실제 JCode 삭제 요청

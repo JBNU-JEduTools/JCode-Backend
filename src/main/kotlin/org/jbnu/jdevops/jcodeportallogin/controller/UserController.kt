@@ -168,7 +168,8 @@ class UserController(
     fun deleteMyJCode(
         @PathVariable courseId: Long,
         @RequestHeader("Authorization") authorization: String,
-        authentication: Authentication
+        authentication: Authentication,
+        @RequestParam(name = "snapshot", required = false, defaultValue = "false") snapshot: Boolean
     ): ResponseEntity<String> {
         // Authorization 헤더에서 "Bearer " 접두사를 제거하여 토큰만 추출 및 검증
         val token = authorization.removePrefix("Bearer").trim()
@@ -179,7 +180,7 @@ class UserController(
         val email = authentication.principal as? String
             ?: throw ResponseStatusException(HttpStatus.UNAUTHORIZED, "Missing email in authentication")
 
-        jCodeService.deleteJCode(email, courseId, token, false)
+        jCodeService.deleteJCode(email, courseId, token, snapshot)
         return ResponseEntity.ok("JCode deleted successfully")
     }
 
