@@ -175,7 +175,5 @@
 
 ## 📎 추가 자료
 
-- [KCC 학부생 논문 (최종심사용)](KCC_최종심사용논문-1.pdf)  
 - **GitHub**  
-  - Main Backend: https://github.com/hodu26/JCodeHub  
-  - Micro Services: https://github.com/hodu26/JCodeMS  
+  - Parent Repo: https://github.com/JBNU-JEduTools/JCode
