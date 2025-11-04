@@ -47,7 +47,7 @@
 
 
 ## 🏗 아키텍처
-![JCode Backend Architecture](https://github.com/user-attachments/assets/e605df24-a650-42f5-bc83-2ba28280aadc)
+![JCode Backend Architecture](https://github.com/user-attachments/assets/22dd2ade-49a7-444d-ace2-2b095e463518)
 
 > WebIDE 컨테이너는 MS의 CodeServer(`coder/code-server`) 이미지를 활용·커스터마이징
 
@@ -157,7 +157,7 @@
 
 ## 🎬 WebIDE(VNC) Demo
 
-![demo](https://github.com/user-attachments/assets/a200b3c8-9cb2-47ff-a1c3-d567eb49120a)
+![demo](https://github.com/user-attachments/assets/a048d262-4030-4e95-afd0-7f90c42aecd6)
 > _2025.03 ~ 현재 진행 중_
 
 
