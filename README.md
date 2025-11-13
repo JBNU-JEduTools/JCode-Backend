@@ -116,7 +116,19 @@
      ```bash
      kubectl apply -f k8s/jcode-backend.yaml
      ```
-3. **HPA(오토스케일러) 적용 (선택)**
+3. **Ingress 설정** (Nginx Ingress 사용 시)
+    - `k8s/jcode-backend-ingress-ex.yaml` 파일에서 host(도메인), tls-secret 설정 후 배포
+    - 예시:
+      ```bash
+      # tls 설정 시 생성
+      # 도메인이 없거나 tls 설정 안할 시 파일에서 tls 섹션 제거
+      kubectl create secret tls {tls-secert} -n watcher \
+        --cert={pem 경로} \
+        --key={key 경로}
+      
+      kubectl apply -f k8s/jcode-backend-ingress-ex.yaml
+      ```
+4. **HPA(오토스케일러) 적용 (선택)**
    - 부하 분산이 필요할 경우 `k8s/jcode-backend-hpa.yaml` 적용
      ```bash
      kubectl apply -f k8s/jcode-backend-hpa.yaml
