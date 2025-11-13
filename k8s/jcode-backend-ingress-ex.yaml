@@ -1,0 +1,52 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: jcode-backend-ingress
+  namespace: watcher
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - {{ host }}
+      secretName: {{ tls-secret }}
+  rules:
+    - host: {{ host }}
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: jcode-backend
+                port:
+                  number: 8080
+    - host: {{ host }}
+      http:
+        paths:
+          - path: /oauth2
+            pathType: Prefix
+            backend:
+              service:
+                name: jcode-backend
+                port:
+                  number: 8080
+    - host: {{ host }}
+      http:
+        paths:
+          - path: /login/oauth2
+            pathType: Prefix
+            backend:
+              service:
+                name: jcode-backend
+                port:
+                  number: 8080
+    - host: {{ host }}
+      http:
+        paths:
+          - path: /logout
+            pathType: Prefix
+            backend:
+              service:
+                name: jcode-backend
+                port:
+                  number: 8080

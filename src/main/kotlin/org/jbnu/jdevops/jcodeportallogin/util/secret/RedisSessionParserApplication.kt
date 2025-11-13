@@ -16,7 +16,7 @@ import java.io.ByteArrayInputStream
 import java.io.IOException
 import java.io.ObjectInputStream
 
-@SpringBootApplication
+@SpringBootApplication(exclude = [org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration::class])
 class RedisSessionParserApplication : CommandLineRunner {
 
     @Autowired
