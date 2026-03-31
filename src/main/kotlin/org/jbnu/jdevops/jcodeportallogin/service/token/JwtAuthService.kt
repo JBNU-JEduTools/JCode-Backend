@@ -21,7 +21,7 @@ class JwtAuthService(
     @Value("\${jwt.refresh.expire}") private val refreshExpireTime: Long
 ) {
 
-    fun createToken(email: String, role: RoleType, tokenType: TokenType): String {
+    fun createToken(email: String, role: RoleType, tokenType: TokenType, assistantCourseIds: List<Long> = emptyList()): String {
         val secretKey = when (tokenType) {
             TokenType.ACCESS -> accessSecretKey
             TokenType.REFRESH -> refreshSecretKey
@@ -37,6 +37,9 @@ class JwtAuthService(
 
         val claims = Jwts.claims().setSubject(email)
         claims["role"] = role
+        if (assistantCourseIds.isNotEmpty()) {
+            claims["assistantCourses"] = assistantCourseIds
+        }
 
         return Jwts.builder()
             .setClaims(claims)

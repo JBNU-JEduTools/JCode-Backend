@@ -41,6 +41,22 @@ data class Course(
     val vnc: Boolean,
 
     @Column(nullable = false)
+    val hwCount: Int = 10,
+
+    @Column(nullable = false)
+    val pracEnabled: Boolean = false,
+
+    @Column(nullable = false)
+    val pracCount: Int = 0,
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    var status: CourseStatus = CourseStatus.ACTIVE,
+
+    @Column
+    var endedAt: LocalDateTime? = null,
+
+    @Column(nullable = false)
     @field:NotBlank(message = "{course.key.required}")
     @field:Size(max = 100, message = "{course.key.size}")
     var courseKey: String,

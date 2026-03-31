@@ -10,4 +10,5 @@ interface JCodeRepository : JpaRepository<Jcode, Long> {
     fun findByUserId(userId: Long): List<Jcode>
     fun findByUserCourse(userCourse: UserCourses): Jcode?
     fun findByUserIdAndCourseIdAndSnapshot(userId: Long, courseId: Long, snapshot: Boolean): Jcode?
+    fun findByCourseId(courseId: Long): List<Jcode>
 }

@@ -6,10 +6,10 @@ WORKDIR /app
 COPY . .
 
 # Gradle Wrapper를 사용하여 Spring Boot JAR 파일 빌드 (Kotlin 1.9.22 포함) - test 제외
-RUN ./gradlew clean build -x test --no-daemon
+RUN chmod +x gradlew && ./gradlew clean build -x test --no-daemon
 
 # ---------- Run Stage ----------
-FROM openjdk:21-slim
+FROM eclipse-temurin:21-jre-jammy
 WORKDIR /app
 
 # 배포 환경 설정 (prod)

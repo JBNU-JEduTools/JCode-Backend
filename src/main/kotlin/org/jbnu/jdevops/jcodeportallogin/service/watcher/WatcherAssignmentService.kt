@@ -84,17 +84,13 @@ class WatcherAssignmentService(
             // 유저의 role에 따라 반환 데이터를 달리 가공
             when (user.role) {
                 RoleType.STUDENT -> {
-                    val totalStudents = userCoursesRepository.countUserCoursesByCourseIdAndRole(courseId, RoleType.STUDENT)
-                    modifyGraphDataForStudent(graphData, user.studentNum, totalStudents, courseId)
-                }
-                RoleType.ASSISTANT -> {
                     // 해당 강의에서의 조교 권한 확인
                     val userCourse = userCoursesRepository.findByUserIdAndCourseId(user.id, courseId)
-                    val totalStudents = userCoursesRepository.countUserCoursesByCourseIdAndRole(courseId, RoleType.STUDENT)
-                    if (userCourse?.role == RoleType.STUDENT) {
-                        modifyGraphDataForStudent(graphData, user.studentNum, totalStudents, courseId)
-                    } else {
+                    if (userCourse?.role == RoleType.ASSISTANT) {
                         graphData
+                    } else {
+                        val totalStudents = userCoursesRepository.countUserCoursesByCourseIdAndRole(courseId, RoleType.STUDENT)
+                        modifyGraphDataForStudent(graphData, user.studentNum, totalStudents, courseId)
                     }
                 }
                 else -> {  // ADMIN과 PROFESSOR은 전부 반환

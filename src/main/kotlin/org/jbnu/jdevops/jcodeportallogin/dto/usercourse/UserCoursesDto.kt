@@ -3,6 +3,7 @@ package org.jbnu.jdevops.jcodeportallogin.dto.usercourse
 import jakarta.validation.constraints.NotBlank
 import jakarta.validation.constraints.Pattern
 import jakarta.validation.constraints.Size
+import org.jbnu.jdevops.jcodeportallogin.entity.CourseStatus
 
 data class UserCoursesDto(
     val courseId: Long,
@@ -22,5 +23,6 @@ data class UserCoursesDto(
 
     val courseYear: Int,
     val courseTerm: Int,
-    val courseClss: Int
+    val courseClss: Int,
+    val status: CourseStatus = CourseStatus.ACTIVE
 )

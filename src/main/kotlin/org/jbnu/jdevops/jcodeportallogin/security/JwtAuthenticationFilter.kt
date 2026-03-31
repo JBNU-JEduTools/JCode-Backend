@@ -45,16 +45,16 @@ class JwtAuthenticationFilter(
             val tokenRole = RoleType.valueOf(claims["role"].toString())
             logger.debug("Access token validated for user: $email with role: $tokenRole")
 
-            // DB에 저장된 사용자의 role 확인
+            // DB에 저장된 사용자 확인
             val dbUser = userRepository.findByEmail(email)
-            if (dbUser == null || dbUser.role != tokenRole) {
-                logger.warn("Role mismatch: JWT role $tokenRole does not match DB role ${dbUser?.role}")
-                response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "Role mismatch")
+            if (dbUser == null) {
+                logger.warn("User not found in DB: $email")
+                response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "User not found")
                 return
             }
 
-            // DB에 저장된 role과 일치하면 SecurityContext에 설정
-            val authorities = listOf(SimpleGrantedAuthority("ROLE_${tokenRole.toString()}"))
+            // DB role 기준으로 SecurityContext 설정 (JWT의 role이 아닌 DB의 실제 role 사용)
+            val authorities = listOf(SimpleGrantedAuthority("ROLE_${dbUser.role}"))
             val auth = UsernamePasswordAuthenticationToken(email, null, authorities)
             SecurityContextHolder.getContext().authentication = auth
         } else {

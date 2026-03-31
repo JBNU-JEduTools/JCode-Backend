@@ -13,6 +13,7 @@ import org.springframework.security.access.prepost.PreAuthorize
 import org.springframework.security.core.Authentication
 import org.springframework.web.bind.annotation.*
 import org.springframework.web.server.ResponseStatusException
+import jakarta.servlet.http.HttpServletRequest
 
 @Tag(name = "Course API", description = "강의 관련 API")
 @RestController
@@ -20,6 +21,10 @@ import org.springframework.web.server.ResponseStatusException
 class CourseController(
     private val courseService: CourseService
 ) {
+    private fun extractToken(request: HttpServletRequest): String? {
+        return request.getHeader("Authorization")?.removePrefix("Bearer ")?.trim()
+    }
+
     // 전체 강의 목록 조회 (ADMIN 전용)
     @Operation(
         summary = "전체 강의 목록 조회",
@@ -36,7 +41,7 @@ class CourseController(
         summary = "강의별 유저 조회",
         description = "특정 강의에 등록된 모든 사용자 정보를 조회합니다. (STUDENT 제외)"
     )
-    @PreAuthorize("hasAnyRole('ADMIN','PROFESSOR','ASSISTANT')")
+    @PreAuthorize("isAuthenticated()")
     @GetMapping("/{courseId}/users")
     fun getUsersByCourse(@PathVariable courseId: Long, authentication: Authentication): ResponseEntity<List<UserInfoDto>> {
         val email = authentication.principal as? String
@@ -68,8 +73,9 @@ class CourseController(
     @Operation(summary = "강의 추가", description = "새로운 강의를 생성합니다. (ADMIN, PROFESSOR 전용)")
     @PreAuthorize("hasAnyRole('ADMIN', 'PROFESSOR')")
     @PostMapping
-    fun createCourse(@RequestBody courseDto: CourseDto): ResponseEntity<CourseDto> {
-        return ResponseEntity.ok(courseService.createCourse(courseDto))
+    fun createCourse(@RequestBody courseDto: CourseDto, request: HttpServletRequest): ResponseEntity<CourseDto> {
+        val token = extractToken(request)
+        return ResponseEntity.ok(courseService.createCourse(courseDto, token))
     }
 
     // 강의 수정 (ADMIN, PROFESSOR 전용)
@@ -84,9 +90,43 @@ class CourseController(
     @Operation(summary = "강의 삭제", description = "특정 강의를 삭제합니다. (ADMIN 전용)")
     @PreAuthorize("hasRole('ADMIN')")
     @DeleteMapping("/{courseId}")
-    fun deleteCourse(@PathVariable courseId: Long): ResponseEntity<String> {
-        courseService.deleteCourse(courseId)
+    fun deleteCourse(@PathVariable courseId: Long, request: HttpServletRequest): ResponseEntity<String> {
+        val token = extractToken(request)
+        courseService.deleteCourse(courseId, token)
         return ResponseEntity.ok("Course deleted successfully")
+    }
+
+    // 강의 종료 (ADMIN 전용)
+    @Operation(summary = "강의 종료", description = "강의를 종료합니다. Pod 전체 삭제, JCode 레코드 삭제. (ADMIN 전용)")
+    @PreAuthorize("hasRole('ADMIN')")
+    @PutMapping("/{courseId}/end")
+    fun endCourse(@PathVariable courseId: Long, request: HttpServletRequest): ResponseEntity<String> {
+        val token = extractToken(request)
+            ?: throw ResponseStatusException(HttpStatus.UNAUTHORIZED, "Authorization token is required")
+        courseService.endCourse(courseId, token)
+        return ResponseEntity.ok("Course ended successfully")
+    }
+
+    // 강의 아카이브 (ADMIN 전용)
+    @Operation(summary = "강의 아카이브", description = "종료된 강의를 아카이브합니다. NS 삭제. (ADMIN 전용)")
+    @PreAuthorize("hasRole('ADMIN')")
+    @PutMapping("/{courseId}/archive")
+    fun archiveCourse(@PathVariable courseId: Long, request: HttpServletRequest): ResponseEntity<String> {
+        val token = extractToken(request)
+            ?: throw ResponseStatusException(HttpStatus.UNAUTHORIZED, "Authorization token is required")
+        courseService.archiveCourse(courseId, token)
+        return ResponseEntity.ok("Course archived successfully")
+    }
+
+    // 강의 재개설 (ADMIN 전용)
+    @Operation(summary = "강의 재개설", description = "종료된 강의를 재개설합니다. NS 재생성. (ADMIN 전용)")
+    @PreAuthorize("hasRole('ADMIN')")
+    @PutMapping("/{courseId}/reopen")
+    fun reopenCourse(@PathVariable courseId: Long, request: HttpServletRequest): ResponseEntity<String> {
+        val token = extractToken(request)
+            ?: throw ResponseStatusException(HttpStatus.UNAUTHORIZED, "Authorization token is required")
+        courseService.reopenCourse(courseId, token)
+        return ResponseEntity.ok("Course reopened successfully")
     }
 
     // 강의 상세 정보 조회

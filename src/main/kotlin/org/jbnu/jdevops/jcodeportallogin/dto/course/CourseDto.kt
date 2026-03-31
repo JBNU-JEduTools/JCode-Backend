@@ -2,6 +2,7 @@ package org.jbnu.jdevops.jcodeportallogin.dto.course
 
 import jakarta.validation.constraints.NotBlank
 import jakarta.validation.constraints.Size
+import org.jbnu.jdevops.jcodeportallogin.entity.CourseStatus
 
 data class CourseDto(
     val courseId: Long?,
@@ -22,6 +23,11 @@ data class CourseDto(
     val term: Int,
     val clss: Int,
     val vnc: Boolean,
+    val hwCount: Int = 10,
+    val pracEnabled: Boolean = false,
+    val pracCount: Int = 0,
+    val status: CourseStatus = CourseStatus.ACTIVE,
+    val endedAt: String? = null,
 
     @field:NotBlank(message = "{course.key.required}")
     @field:Size(max = 100, message = "{course.key.size}")

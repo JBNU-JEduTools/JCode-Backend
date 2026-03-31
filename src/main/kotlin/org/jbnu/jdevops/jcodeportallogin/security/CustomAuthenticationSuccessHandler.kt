@@ -5,6 +5,7 @@ import jakarta.servlet.http.HttpServletRequest
 import jakarta.servlet.http.HttpServletResponse
 import org.jbnu.jdevops.jcodeportallogin.entity.RoleType
 import org.jbnu.jdevops.jcodeportallogin.entity.User
+import org.jbnu.jdevops.jcodeportallogin.repo.UserCoursesRepository
 import org.jbnu.jdevops.jcodeportallogin.repo.UserRepository
 import org.jbnu.jdevops.jcodeportallogin.service.RedisService
 import org.jbnu.jdevops.jcodeportallogin.service.token.JwtAuthService
@@ -29,6 +30,7 @@ class CustomAuthenticationSuccessHandler(
     private val jwtAuthService: JwtAuthService,
     private val authorizedClientService: OAuth2AuthorizedClientService,
     private val userRepository: UserRepository,
+    private val userCoursesRepository: UserCoursesRepository,
     private val redisService: RedisService,
     @Value("\${front.domain}") private val frontDomain: String,
     private val jwtUtil: JwtUtil,
@@ -77,8 +79,10 @@ class CustomAuthenticationSuccessHandler(
             redisService.storeIdToken(email, idTokenValue)
         }
 
-        // 5. 자체 발급 refresh token 생성 및 Redis 해시("user:refresh_tokens")에 저장
-        val myRefreshToken = jwtAuthService.createToken(email, role, TokenType.REFRESH)
+        // 5. 조교 수업 목록 조회 및 자체 발급 refresh token 생성
+        val assistantCourseIds = userCoursesRepository.findByUserEmailAndRole(email, RoleType.ASSISTANT)
+            .map { it.course.id }
+        val myRefreshToken = jwtAuthService.createToken(email, role, TokenType.REFRESH, assistantCourseIds)
         redisService.storeRefreshToken(email, myRefreshToken)
         // refresh token을 HttpOnly 쿠키로 전달
         response.addCookie(jwtUtil.createJwtCookie("jcodeRt", myRefreshToken))

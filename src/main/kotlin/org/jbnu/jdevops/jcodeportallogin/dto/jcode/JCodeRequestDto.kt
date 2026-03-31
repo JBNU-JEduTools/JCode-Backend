@@ -29,7 +29,9 @@ data class JCodeRequestDto(
     val student_num: String,
 
     val use_vnc: Boolean,
-    val use_snapshot : Boolean
+    val use_snapshot: Boolean,
+    val hw_count: Int = 10,
+    val prac_count: Int = 0
 )
 
 data class JCodeDeleteRequestDto(

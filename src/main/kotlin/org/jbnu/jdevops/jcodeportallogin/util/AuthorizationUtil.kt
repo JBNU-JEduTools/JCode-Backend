@@ -15,14 +15,13 @@ object AuthorizationUtil {
     ) {
         when (currentUserRole) {
             RoleType.STUDENT -> {
-                if (currentUserId != targetUserId) {
-                    throw ResponseStatusException(HttpStatus.FORBIDDEN, "해당 권한이 없습니다.")
-                }
-            }
-            RoleType.ASSISTANT -> {
+                // 수업별 조교 역할 확인
                 val userCourses = userCoursesRepository.findByUserIdAndCourseId(currentUserId, courseId)
-                    ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "해당 강의에 가입되이 있지 않습니다.")
-                if (userCourses.role == RoleType.STUDENT && currentUserId != targetUserId) {
+                if (userCourses?.role == RoleType.ASSISTANT) {
+                    // 조교는 다른 학생 접근 허용
+                    return
+                }
+                if (currentUserId != targetUserId) {
                     throw ResponseStatusException(HttpStatus.FORBIDDEN, "해당 권한이 없습니다.")
                 }
             }

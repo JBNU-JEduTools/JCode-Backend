@@ -4,6 +4,8 @@ import jakarta.validation.constraints.NotBlank
 import jakarta.validation.constraints.Pattern
 import jakarta.validation.constraints.Size
 import org.jbnu.jdevops.jcodeportallogin.dto.assignment.AssignmentDto
+import org.jbnu.jdevops.jcodeportallogin.entity.CourseStatus
+import org.jbnu.jdevops.jcodeportallogin.entity.RoleType
 
 data class UserCourseDetailsDto(
     val courseId: Long,
@@ -24,6 +26,11 @@ data class UserCourseDetailsDto(
     val courseYear: Int,
     val courseTerm: Int,
     val courseClss: Int,
+    val hwCount: Int = 10,
+    val pracEnabled: Boolean = false,
+    val pracCount: Int = 0,
+    val status: CourseStatus = CourseStatus.ACTIVE,
+    val courseRole: RoleType? = null,
     val assignments: List<AssignmentDto>,
     val jcodeUrl: String?
 )

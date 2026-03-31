@@ -45,11 +45,12 @@ class UserService(
             // 비밀번호 해싱
             val hashedPassword = passwordEncoder.encode(registerUserDto.password)
 
-            // 새 사용자 저장
+            // 새 사용자 저장 (전역 ASSISTANT 역할은 허용하지 않음 — 수업별로만 관리)
+            val safeRole = if (registerUserDto.role == RoleType.ASSISTANT) RoleType.STUDENT else registerUserDto.role
             val user = userRepository.save(
                 User(
                     email = registerUserDto.email,
-                    role = registerUserDto.role,  // 기본적으로 학생 역할 부여
+                    role = safeRole,
                     studentNum = registerUserDto.studentNum
                 )
             )
@@ -119,7 +120,8 @@ class UserService(
                 courseProfessor = it.course.professor,
                 courseClss = it.course.clss,
                 courseTerm = it.course.term,
-                courseYear = it.course.year
+                courseYear = it.course.year,
+                status = it.course.status
             )
         }
     }
@@ -141,7 +143,8 @@ class UserService(
                 courseProfessor = it.course.professor,
                 courseClss = it.course.clss,
                 courseTerm = it.course.term,
-                courseYear = it.course.year
+                courseYear = it.course.year,
+                status = it.course.status
             )
         }
     }
@@ -178,6 +181,11 @@ class UserService(
                 courseClss = it.course.clss,
                 courseTerm = it.course.term,
                 courseYear = it.course.year,
+                hwCount = it.course.hwCount,
+                pracEnabled = it.course.pracEnabled,
+                pracCount = it.course.pracCount,
+                status = it.course.status,
+                courseRole = it.role,
                 assignments = assignments.map { assignment ->
                     AssignmentDto(
                         assignmentId = assignment.id,
@@ -224,10 +232,8 @@ class UserService(
             throw ResponseStatusException(HttpStatus.CONFLICT, "User already enrolled in this course")
         }
 
-        // 조교는 가입 시 기본적으로 STUDENT로 가입  ->  추후에 관리자/교수가 권한 승격 시켜줌
-        var role: RoleType? = null
-        if (user.role == RoleType.ASSISTANT) role = RoleType.STUDENT
-        else role = user.role
+        // 가입 시 전역 role 사용 (ASSISTANT 전역 role 제거됨 — 수업별로만 관리)
+        val role = user.role
 
         // UserCourses 엔티티 저장
         val userCourse = UserCourses(
@@ -326,9 +332,9 @@ class UserService(
                 if (!redisService.isUserInCourseManagers(course.code, course.clss, currentUser.email)) {
                     throw ResponseStatusException(HttpStatus.FORBIDDEN, "현재 교수로 등록되어 있지 않아 권한이 없습니다.")
                 }
-                // 대상 유저의 기존 role과 변경할 새 role은 STUDENT 또는 ASSISTANT여야 함
-                if (newRole !in listOf(RoleType.STUDENT, RoleType.ASSISTANT) || targetUser.role !in listOf(RoleType.STUDENT, RoleType.ASSISTANT)) {
-                    throw ResponseStatusException(HttpStatus.FORBIDDEN, "PROFESSOR는 STUDENT 또는 ASSISTANT의 권한만 변경할 수 있습니다.")
+                // 수업별 권한만 변경 가능 (STUDENT ↔ ASSISTANT)
+                if (newRole !in listOf(RoleType.STUDENT, RoleType.ASSISTANT)) {
+                    throw ResponseStatusException(HttpStatus.FORBIDDEN, "PROFESSOR는 수업별 STUDENT/ASSISTANT 권한만 변경할 수 있습니다.")
                 }
             }
             else -> {
@@ -353,12 +359,7 @@ class UserService(
 
             userCourse.role = newRole
             userCoursesRepository.save(userCourse)
-
-            // 대상 유저의 역할 업데이트 후 저장 (ASSISTANT는 하나라도 ASSISTANT를 가지고 있을 시 업데이트 X)
-            if (newRole != RoleType.STUDENT || userCoursesRepository.findByUserEmailAndRole(targetUser.email, targetUser.role).isEmpty()) {
-                targetUser.role = newRole
-                userRepository.save(targetUser)
-            }
+            // 수업별 role만 변경, 전역 User.role은 변경하지 않음
         } else {
             // courseId가 null이면 모든 가입 강의에 대해 업데이트 (STUDENT, PROFESSOR만 해당)
             targetUser.courses.forEach { userCourse ->

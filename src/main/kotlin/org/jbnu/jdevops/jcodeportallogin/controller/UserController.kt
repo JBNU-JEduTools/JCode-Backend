@@ -77,7 +77,7 @@ class UserController(
         summary = "내 조교 권한 강의 정보 조회",
         description = "현재 인증된 사용자가 조교로서 참가 중인 강의 목록을 조회합니다. (ASSISTANT 전용)"
     )
-    @PreAuthorize("hasRole('ASSISTANT')")
+    @PreAuthorize("isAuthenticated()")
     @GetMapping("/me/assistant/courses")
     fun getUserAssistantCourses(request: HttpServletRequest, authentication: Authentication): ResponseEntity<List<UserCoursesDto>> {
         val email = authentication.principal as? String

@@ -5,6 +5,7 @@ import org.jbnu.jdevops.jcodeportallogin.dto.auth.LoginUserDto
 
 import org.jbnu.jdevops.jcodeportallogin.entity.RoleType
 import org.jbnu.jdevops.jcodeportallogin.repo.LoginRepository
+import org.jbnu.jdevops.jcodeportallogin.repo.UserCoursesRepository
 import org.jbnu.jdevops.jcodeportallogin.repo.UserRepository
 import org.jbnu.jdevops.jcodeportallogin.service.token.JwtAuthService
 import org.jbnu.jdevops.jcodeportallogin.service.token.TokenType
@@ -20,11 +21,17 @@ import org.springframework.web.server.ResponseStatusException
 class AuthService(
     private val userRepository: UserRepository,
     private val loginRepository: LoginRepository,
+    private val userCoursesRepository: UserCoursesRepository,
     private val passwordEncoder: PasswordEncoder,
     private val jwtAuthService: JwtAuthService,
     private val redisService: RedisService,
     private val jwtUtil: JwtUtil
 ) {
+    private fun getAssistantCourseIds(email: String): List<Long> {
+        return userCoursesRepository.findByUserEmailAndRole(email, RoleType.ASSISTANT)
+            .map { it.course.id }
+    }
+
 
     @Transactional(readOnly = true)
     fun basicLogin(loginUserDto: LoginUserDto): Map<String, String> {
@@ -39,7 +46,8 @@ class AuthService(
         }
 
         // JWT 토큰 생성 (이메일 + 학교 정보)
-        val jwt = jwtAuthService.createToken(user.email, RoleType.STUDENT, TokenType.ACCESS)
+        val assistantCourseIds = getAssistantCourseIds(user.email)
+        val jwt = jwtAuthService.createToken(user.email, RoleType.STUDENT, TokenType.ACCESS, assistantCourseIds)
         return mapOf("message" to "Login successful", "token" to jwt)
     }
 
@@ -66,8 +74,9 @@ class AuthService(
         val role: RoleType = user.role
 
         // 6. 새 access token 및 refresh token 생성 (RTR 적용)
-        val newAccessToken = jwtAuthService.createToken(email, role, TokenType.ACCESS)
-        val newRefreshToken = jwtAuthService.createToken(email, role, TokenType.REFRESH)
+        val assistantCourseIds = getAssistantCourseIds(email)
+        val newAccessToken = jwtAuthService.createToken(email, role, TokenType.ACCESS, assistantCourseIds)
+        val newRefreshToken = jwtAuthService.createToken(email, role, TokenType.REFRESH, assistantCourseIds)
 
         // 7. Redis에 새로운 refresh token 저장
         redisService.storeRefreshToken(email, newRefreshToken)
@@ -98,8 +107,9 @@ class AuthService(
         val role = user.role
 
         // 5. 새 access token 및 refresh token 생성 (RTR 적용)
-        val newAccessToken = jwtAuthService.createToken(email, role, TokenType.ACCESS)
-        val newRefreshToken = jwtAuthService.createToken(email, role, TokenType.REFRESH)
+        val assistantCourseIds = getAssistantCourseIds(email)
+        val newAccessToken = jwtAuthService.createToken(email, role, TokenType.ACCESS, assistantCourseIds)
+        val newRefreshToken = jwtAuthService.createToken(email, role, TokenType.REFRESH, assistantCourseIds)
 
         // 6. Redis에 새로운 refresh token 저장
         redisService.storeRefreshToken(email, newRefreshToken)

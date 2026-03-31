@@ -52,6 +52,8 @@ dependencies {
     implementation("org.jsoup:jsoup:1.15.3")
     implementation("org.springframework.boot:spring-boot-starter-actuator")
     implementation("io.micrometer:micrometer-registry-prometheus")
+    implementation("org.flywaydb:flyway-core")
+    implementation("org.flywaydb:flyway-mysql")
 }
 
 kotlin {
