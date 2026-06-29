@@ -53,7 +53,7 @@ class WatcherStudentService(
                 .uri { uriBuilder ->
                     uriBuilder
                         .path("/api/snapshot_avg/{class_div}/{hw_name}/{student_num}/{fileName}")
-                        .build(classDiv, assignment.name, targetUser.studentNum, fileName)
+                        .build(classDiv, assignment.watcherHwName(), targetUser.studentNum, fileName)
                 }
                 .retrieve()
                 .bodyToMono(SnapshotAvgDto::class.java)
@@ -94,7 +94,7 @@ class WatcherStudentService(
                 .uri { uriBuilder ->
                     uriBuilder
                         .path("/api/assignments/snapshot_avg/{class_div}/{hw_name}/{student_num}")
-                        .build(classDiv, assignment.name, targetUser.studentNum)
+                        .build(classDiv, assignment.watcherHwName(), targetUser.studentNum)
                 }
                 .retrieve()
                 .bodyToMono(SnapshotAvgDto::class.java)
@@ -135,7 +135,7 @@ class WatcherStudentService(
                 .uri { uriBuilder ->
                     uriBuilder
                         .path("/api/graph_data/{class_div}/{hw_name}/{student_num}/{interval}")
-                        .build(classDiv, assignment.name, targetUser.studentNum, interval)
+                        .build(classDiv, assignment.watcherHwName(), targetUser.studentNum, interval)
                 }
                 .retrieve()
                 .bodyToMono(GraphDataListDto::class.java)
@@ -176,7 +176,7 @@ class WatcherStudentService(
                 .uri { uriBuilder ->
                     uriBuilder
                         .path("/api/{class_div}/{hw_name}/{student_num}/logs/build")
-                        .build(classDiv, assignment.name, targetUser.studentNum)
+                        .build(classDiv, assignment.watcherHwName(), targetUser.studentNum)
                 }
                 .retrieve()
                 .bodyToMono(object : ParameterizedTypeReference<List<WatcherBuildLogDto>>() {})  // List 파싱
@@ -217,7 +217,7 @@ class WatcherStudentService(
                 .uri { uriBuilder ->
                     uriBuilder
                         .path("/api/{class_div}/{hw_name}/{student_num}/logs/run")
-                        .build(classDiv, assignment.name, targetUser.studentNum)
+                        .build(classDiv, assignment.watcherHwName(), targetUser.studentNum)
                 }
                 .retrieve()
                 .bodyToMono(object : ParameterizedTypeReference<List<WatcherRunLogDto>>() {})  // List 파싱

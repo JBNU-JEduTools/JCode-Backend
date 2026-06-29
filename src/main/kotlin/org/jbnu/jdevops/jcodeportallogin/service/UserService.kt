@@ -191,6 +191,8 @@ class UserService(
                         assignmentId = assignment.id,
                         assignmentName = assignment.name,
                         assignmentDescription = assignment.description,
+                        dirName = assignment.dirName,
+                        hasStarterCode = assignment.hasStarterCode,
                         kickoffDate = assignment.kickoffDate,
                         deadlineDate = assignment.deadlineDate,
                         createdAt = assignment.createdAt.toString(),
@@ -322,6 +324,11 @@ class UserService(
         val targetUser = userRepository.findById(userId)
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "User not found with id: $userId")
 
+        // 전역 ASSISTANT 설정 차단: ASSISTANT는 수업별(courseId 필수)로만 부여 가능
+        if (newRole == RoleType.ASSISTANT && courseId == null) {
+            throw ResponseStatusException(HttpStatus.BAD_REQUEST, "ASSISTANT 권한은 특정 강의에 대해서만 설정할 수 있습니다.")
+        }
+
         when (currentUser.role) {
             RoleType.ADMIN -> {}  // ADMIN은 모든 권한 설정 가능
             RoleType.PROFESSOR -> {
@@ -401,8 +408,11 @@ class UserService(
             .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "Course not found") }
 
         if (currentUser.role != RoleType.ADMIN) {
-            val currentUserCourse = userCoursesRepository.findByUserIdAndCourseId(user.id, course.id)
-                ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "이 강의에 대한 권한이 없습니다.")
+            val currentUserCourse = userCoursesRepository.findByUserIdAndCourseId(currentUser.id, course.id)
+                ?: throw ResponseStatusException(HttpStatus.FORBIDDEN, "이 강의에 대한 권한이 없습니다.")
+            if (currentUserCourse.role != RoleType.PROFESSOR) {
+                throw ResponseStatusException(HttpStatus.FORBIDDEN, "이 강의의 담당 교수 권한이 없습니다.")
+            }
         }
 
         val userCourse = userCoursesRepository.findByUserIdAndCourseId(user.id, course.id)

@@ -51,7 +51,7 @@ class WatcherSelectionService (
                 .uri { uriBuilder ->
                     uriBuilder
                         .path("/api/{class_div}/{hw_name}/{student_num}")
-                        .build(classDiv, assignment.name, targetUser.studentNum)
+                        .build(classDiv, assignment.watcherHwName(), targetUser.studentNum)
                 }
                 .retrieve()
                 .bodyToMono(object : ParameterizedTypeReference<List<String>>() {})  // List 파싱
@@ -92,7 +92,7 @@ class WatcherSelectionService (
                 .uri { uriBuilder ->
                     uriBuilder
                         .path("/api/{class_div}/{hw_name}/{student_num}/{filename}")
-                        .build(classDiv, assignment.name, targetUser.studentNum, filename)
+                        .build(classDiv, assignment.watcherHwName(), targetUser.studentNum, filename)
                 }
                 .retrieve()
                 .bodyToMono(object : ParameterizedTypeReference<List<String>>() {})  // List 파싱

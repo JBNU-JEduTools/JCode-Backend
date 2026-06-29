@@ -22,6 +22,12 @@ data class Assignment(
     @Column
     val description: String?,
 
+    @Column(name = "dir_name", nullable = false)
+    val dirName: String = "",
+
+    @Column(name = "has_starter_code", nullable = false)
+    val hasStarterCode: Boolean = false,
+
     @Column
     @field:NotNull(message = "{kickoff.date.required}")
     val kickoffDate: LocalDateTime,

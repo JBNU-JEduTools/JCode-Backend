@@ -43,7 +43,7 @@ class WatcherAssignmentService(
                 .uri { uriBuilder ->
                     uriBuilder
                         .path("/api/assignment/{class_div}/{hw_name}")
-                        .build(classDiv, assignment.name)
+                        .build(classDiv, assignment.watcherHwName())
                 }
                 .retrieve()
                 .bodyToMono(WatcherAssignmentDto::class.java)
@@ -75,7 +75,7 @@ class WatcherAssignmentService(
                 .uri { uriBuilder ->
                     uriBuilder
                         .path("/api/total_graph_data/{class_div}/{hw_name}/{st}/{end}")
-                        .build(classDiv, assignment.name, st, end)
+                        .build(classDiv, assignment.watcherHwName(), st, end)
                 }
                 .retrieve()
                 .bodyToMono(AssingmentTotalGraphListData::class.java)
@@ -162,7 +162,7 @@ class WatcherAssignmentService(
                 .uri { uriBuilder ->
                     uriBuilder
                         .path("/api/build_avg/{class_div}/{hw_name}")
-                        .build(classDiv, assignment.name)
+                        .build(classDiv, assignment.watcherHwName())
                 }
                 .retrieve()
                 .bodyToMono(WatcherLogAvgDto::class.java)
@@ -191,7 +191,7 @@ class WatcherAssignmentService(
                 .uri { uriBuilder ->
                     uriBuilder
                         .path("/api/run_avg/{class_div}/{hw_name}")
-                        .build(classDiv, assignment.name)
+                        .build(classDiv, assignment.watcherHwName())
                 }
                 .retrieve()
                 .bodyToMono(WatcherLogAvgDto::class.java)

@@ -31,7 +31,8 @@ data class JCodeRequestDto(
     val use_vnc: Boolean,
     val use_snapshot: Boolean,
     val hw_count: Int = 10,
-    val prac_count: Int = 0
+    val prac_count: Int = 0,
+    val assignment_dirs: List<String> = emptyList()
 )
 
 data class JCodeDeleteRequestDto(

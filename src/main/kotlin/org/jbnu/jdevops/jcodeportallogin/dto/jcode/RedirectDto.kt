@@ -6,5 +6,6 @@ data class RedirectDto (
     @field:NotBlank(message = "{redirect.userEmail.required}")
     val userEmail: String,
     val courseId: Long,
-    val snapshot: Boolean = false
+    val snapshot: Boolean = false,
+    val assignmentId: Long? = null
 )

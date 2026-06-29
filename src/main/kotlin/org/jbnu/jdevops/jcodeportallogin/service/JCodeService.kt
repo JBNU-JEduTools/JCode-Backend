@@ -4,6 +4,7 @@ import org.jbnu.jdevops.jcodeportallogin.dto.jcode.*
 import org.jbnu.jdevops.jcodeportallogin.entity.CourseStatus
 import org.jbnu.jdevops.jcodeportallogin.entity.Jcode
 import org.jbnu.jdevops.jcodeportallogin.entity.RoleType
+import org.jbnu.jdevops.jcodeportallogin.repo.AssignmentRepository
 import org.jbnu.jdevops.jcodeportallogin.repo.JCodeRepository
 import org.jbnu.jdevops.jcodeportallogin.repo.CourseRepository
 import org.jbnu.jdevops.jcodeportallogin.repo.UserCoursesRepository
@@ -26,7 +27,8 @@ class JCodeService(
     private val jCodeRepository: JCodeRepository,
     private val courseRepository: CourseRepository,
     private val userRepository: UserRepository,
-    private val userCoursesRepository: UserCoursesRepository
+    private val userCoursesRepository: UserCoursesRepository,
+    private val assignmentRepository: AssignmentRepository
 ) {
     // JCode 생성
     // transactional을 통해 master db에서 작업하도록 명시
@@ -69,6 +71,8 @@ class JCodeService(
         }
         val app_label = deployment_name
 
+        val assignmentDirs = assignmentRepository.findByCourseId(course.id).map { it.dirName }
+
         val jcodeRequestBody = JCodeRequestDto (
             namespace = "jcode-${course.code.lowercase()}-${course.clss}",
             deployment_name = deployment_name,
@@ -79,7 +83,8 @@ class JCodeService(
             use_vnc = course.vnc,
             use_snapshot = snapshot,
             hw_count = course.hwCount,
-            prac_count = if (course.pracEnabled) course.pracCount else 0
+            prac_count = if (course.pracEnabled) course.pracCount else 0,
+            assignment_dirs = assignmentDirs
         )
 
         // 외부 API 호출: JCode가 없으므로 쿠버네티스에 실제 JCode 생성 요청
