@@ -33,7 +33,7 @@ class WatcherSelectionService (
 
         AuthorizationUtil.validateUserAuthority(currentUser.role, currentUser.id, targetUser.id, course.id, userCoursesRepository)
 
-        val assignment = assignmentRepository.findById(assignmentId)
+        val assignment = assignmentRepository.findByIdAndCourseId(assignmentId, courseId)
             .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "Assignment not found") }
 
         if (assignment.course.id != course.id) {
@@ -74,7 +74,7 @@ class WatcherSelectionService (
 
         AuthorizationUtil.validateUserAuthority(currentUser.role, currentUser.id, targetUser.id, course.id, userCoursesRepository)
 
-        val assignment = assignmentRepository.findById(assignmentId)
+        val assignment = assignmentRepository.findByIdAndCourseId(assignmentId, courseId)
             .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "Assignment not found") }
 
         if (assignment.course.id != course.id) {

@@ -73,7 +73,7 @@ class JwtAuthenticationFilter(
             "/api/auth/token", "/api/auth/refresh",         // access token 발급 엔드포인트
             "/swagger-ui/**", "/v3/api-docs/**",            // swagger 관련 엔드포인트
             "/oauth2/**", "/login",                         // 로그인 관련 엔드포인트
-            "/actuator/prometheus"                          // 프로메테우스 엔드포인트
+            "/actuator/health", "/actuator/info", "/actuator/prometheus" // 운영 상태 엔드포인트
         )
 
         val shouldNotFilter = excludedPaths.any { matcher.match(it, request.requestURI) }

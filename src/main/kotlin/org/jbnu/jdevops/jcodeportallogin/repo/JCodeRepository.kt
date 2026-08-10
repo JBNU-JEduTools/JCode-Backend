@@ -9,6 +9,7 @@ import org.springframework.data.jpa.repository.JpaRepository
 interface JCodeRepository : JpaRepository<Jcode, Long> {
     fun findByUserId(userId: Long): List<Jcode>
     fun findByUserCourse(userCourse: UserCourses): Jcode?
+    fun findAllByUserCourse(userCourse: UserCourses): List<Jcode>
     fun findByUserIdAndCourseIdAndSnapshot(userId: Long, courseId: Long, snapshot: Boolean): Jcode?
     fun findByCourseId(courseId: Long): List<Jcode>
 }

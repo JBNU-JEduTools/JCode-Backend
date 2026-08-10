@@ -50,7 +50,7 @@ class SecurityConfig {
                     .requestMatchers("/login", "/error", "/oauth2/**").permitAll()
                     .requestMatchers("/api/auth/signup", "/api/auth/login/basic", "/api/auth/login/oidc/success").permitAll()
                     .requestMatchers("/swagger-ui/**", "/v3/api-docs/**").permitAll()
-                    .requestMatchers("/actuator/prometheus").permitAll()
+                    .requestMatchers("/actuator/health", "/actuator/info", "/actuator/prometheus").permitAll()
                     .requestMatchers("/api/**").authenticated()
                     .anyRequest().authenticated()  // 모든 요청에 대해 인증 요구
             }

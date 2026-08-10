@@ -42,10 +42,11 @@ class RedisService(
         redisTemplate.opsForValue().set(key, jcodeUrl, 180, TimeUnit.DAYS) // 유효기간 6개월 (약 180일)
     }
 
-    // 이메일 & 강의코드 & 분반 → 저장된 JCode URL 삭제
-    fun deleteUserCourse(email: String, courseCode: String, courseClss: Int) {
-        val key = "user:$email:course:$courseCode:$courseClss"
-        redisTemplate.delete(key)
+    // 이메일 & 강의코드 & 분반 → 일반·스냅샷 JCode URL을 함께 삭제
+    fun deleteUserCourseAccess(email: String, courseCode: String, courseClss: Int) {
+        val baseKey = "user:$email:course:$courseCode:$courseClss"
+        redisTemplate.delete(baseKey)
+        redisTemplate.delete("$baseKey:snapshot")
     }
 
     // 강의 관리자 목록에 특정 사용자가 있는지 확인

@@ -6,38 +6,41 @@ import org.jbnu.jdevops.jcodeportallogin.dto.usercourse.UserCourseDetailsDto
 import org.jbnu.jdevops.jcodeportallogin.dto.user.UserInfoDto
 import org.jbnu.jdevops.jcodeportallogin.entity.Course
 import org.jbnu.jdevops.jcodeportallogin.entity.CourseStatus
+import org.jbnu.jdevops.jcodeportallogin.entity.CourseInfrastructureAction
 import org.jbnu.jdevops.jcodeportallogin.entity.RoleType
+import org.jbnu.jdevops.jcodeportallogin.entity.UserCourses
 import org.jbnu.jdevops.jcodeportallogin.repo.AssignmentRepository
 import org.jbnu.jdevops.jcodeportallogin.repo.CourseRepository
-import org.jbnu.jdevops.jcodeportallogin.repo.JCodeRepository
 import org.jbnu.jdevops.jcodeportallogin.repo.UserCoursesRepository
 import org.jbnu.jdevops.jcodeportallogin.repo.UserRepository
 import org.jbnu.jdevops.jcodeportallogin.util.CourseKeyUtil
-import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.stereotype.Service
-import org.springframework.web.reactive.function.client.WebClient
 import org.springframework.web.server.ResponseStatusException
 import org.springframework.http.HttpStatus
-import org.springframework.http.MediaType
 import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.transaction.annotation.Transactional
-import java.time.LocalDateTime
 
 @Service
 class CourseService(
     private val userCoursesRepository: UserCoursesRepository,
     private val assignmentRepository: AssignmentRepository,
     private val courseRepository: CourseRepository,
-    private val jCodeRepository: JCodeRepository,
     private val courseKeyUtil: CourseKeyUtil,
     private val passwordEncoder: PasswordEncoder,
     private val userRepository: UserRepository,
-    @Qualifier("generatorWebClient")
-    private val generatorWebClient: WebClient
+    private val infrastructureOperationStore: CourseInfrastructureOperationStore
 ) {
 
-    private fun getCourseNamespace(course: Course): String {
-        return "jcode-${course.code.lowercase()}-${course.clss}"
+    private fun validateCourseManagementAuthority(courseId: Long, email: String) {
+        val user = userRepository.findByEmail(email)
+            ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "Current user not found")
+        if (user.role == RoleType.ADMIN) {
+            return
+        }
+        val membership = userCoursesRepository.findByUserIdAndCourseId(user.id, courseId)
+        if (membership?.role != RoleType.PROFESSOR) {
+            throw ResponseStatusException(HttpStatus.FORBIDDEN, "해당 강의의 담당 교수 권한이 없습니다.")
+        }
     }
     // 강의별 유저 조회
     @Transactional(readOnly = true)
@@ -52,11 +55,10 @@ class CourseService(
         val currentUser = userRepository.findByEmail(email)
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "Current user not found")
 
-        // STUDENT인 경우 해당 강의에서 조교 역할인지 확인
-        if (currentUser.role == RoleType.STUDENT) {
-            val isAssistantInCourse = userCoursesRepository.existsByCourseIdAndUserIdAndRole(courseId, currentUser.id, RoleType.ASSISTANT)
-            if (!isAssistantInCourse) {
-                return emptyList()
+        if (currentUser.role != RoleType.ADMIN) {
+            val membership = userCoursesRepository.findByUserIdAndCourseId(currentUser.id, courseId)
+            if (membership?.role !in setOf(RoleType.PROFESSOR, RoleType.ASSISTANT)) {
+                throw ResponseStatusException(HttpStatus.FORBIDDEN, "해당 강의의 사용자 조회 권한이 없습니다.")
             }
         }
 
@@ -100,7 +102,8 @@ class CourseService(
 
     // 강의 key 재발급
     @Transactional
-    fun reissueCourseKey(courseId: Long): String {
+    fun reissueCourseKey(courseId: Long, email: String): String {
+        validateCourseManagementAuthority(courseId, email)
         val course = courseRepository.findById(courseId)
             .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "Course not found") }
 
@@ -117,7 +120,7 @@ class CourseService(
 
     // 강의 추가 (DB 저장 + Generator에 NS 초기화 요청)
     @Transactional
-    fun createCourse(courseDto: CourseDto, token: String? = null): CourseDto {
+    fun createCourse(courseDto: CourseDto, creatorEmail: String): CourseDto {
         // 랜덤 key를 생성하여 할당
         val rawKey = courseKeyUtil.generateCourseEnrollmentCode(courseDto.code, courseDto.clss)
         // PasswordEncoder를 사용해 암호화 (해싱) 처리
@@ -134,26 +137,17 @@ class CourseService(
             hwCount = courseDto.hwCount,
             pracEnabled = courseDto.pracEnabled,
             pracCount = courseDto.pracCount,
-            courseKey = encryptedKey
+            courseKey = encryptedKey,
+            status = CourseStatus.PROVISIONING
         ))
 
-        // Generator에 NS 초기화 요청 (실패해도 강의 생성은 유지 — JCode 배포 시 자동 생성 fallback 있음)
-        if (token != null) {
-            try {
-                val namespace = getCourseNamespace(course)
-                generatorWebClient.post()
-                    .uri("/api/namespace")
-                    .header("Authorization", "Bearer $token")
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .bodyValue(mapOf("namespace" to namespace))
-                    .retrieve()
-                    .bodyToMono(Map::class.java)
-                    .block()
-            } catch (ex: Exception) {
-                // NS 생성 실패는 치명적이지 않음 — JCode 배포 시 자동 생성됨
-                println("Warning: NS 초기화 실패 (JCode 배포 시 자동 생성됩니다): ${ex.message}")
-            }
-        }
+        val creator = userRepository.findByEmail(creatorEmail)
+            ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "Course creator not found")
+        userCoursesRepository.save(
+            UserCourses(course = course, user = creator, role = RoleType.PROFESSOR)
+        )
+
+        infrastructureOperationStore.enqueue(course.id, CourseInfrastructureAction.PROVISION_NAMESPACE)
 
         return CourseDto(
             courseId = course.id,
@@ -174,13 +168,20 @@ class CourseService(
 
     // 강의 수정
     @Transactional
-    fun updateCourse(courseId: Long, courseDto: CourseDto): CourseDto {
+    fun updateCourse(courseId: Long, courseDto: CourseDto, email: String): CourseDto {
+        validateCourseManagementAuthority(courseId, email)
         val course = courseRepository.findById(courseId)
             .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "Course not found") }
+
+        if (course.code != courseDto.code || course.clss != courseDto.clss || course.vnc != courseDto.vnc) {
+            throw ResponseStatusException(
+                HttpStatus.CONFLICT,
+                "강의 code, clss, vnc는 인프라 식별자이므로 생성 후 변경할 수 없습니다."
+            )
+        }
+
         val updatedCourse = course.copy(
             name = courseDto.name,
-            code = courseDto.code,
-            clss = courseDto.clss,
             year = courseDto.year,
             term = courseDto.term,
             professor = courseDto.professor,
@@ -207,32 +208,24 @@ class CourseService(
     }
 
     @Transactional
-    fun deleteCourse(courseId: Long, token: String? = null) {
+    fun deleteCourse(courseId: Long) {
         val course = courseRepository.findById(courseId)
             .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "Course not found") }
 
-        // ARCHIVED 상태가 아니면 NS도 삭제
-        if (course.status != CourseStatus.ARCHIVED && token != null) {
-            try {
-                val namespace = getCourseNamespace(course)
-                generatorWebClient.delete()
-                    .uri("/api/namespace/$namespace")
-                    .header("Authorization", "Bearer $token")
-                    .retrieve()
-                    .bodyToMono(Map::class.java)
-                    .block()
-            } catch (ex: Exception) {
-                println("Warning: NS 삭제 실패: ${ex.message}")
-            }
+        if (course.status != CourseStatus.ARCHIVED) {
+            throw ResponseStatusException(
+                HttpStatus.CONFLICT,
+                "강의 Namespace 아카이브가 완료된 뒤에만 강의를 삭제할 수 있습니다."
+            )
         }
 
         // 강의 삭제
         courseRepository.delete(course)
     }
 
-    // 강의 종료: status → ENDED, pod 전체 삭제, jcode 레코드 삭제
+    // 강의 종료 요청: DB에 desired state와 작업을 기록하고 reconciler가 완료한다.
     @Transactional
-    fun endCourse(courseId: Long, token: String) {
+    fun endCourse(courseId: Long) {
         val course = courseRepository.findById(courseId)
             .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "Course not found") }
 
@@ -240,32 +233,14 @@ class CourseService(
             throw ResponseStatusException(HttpStatus.BAD_REQUEST, "ACTIVE 상태의 강의만 종료할 수 있습니다.")
         }
 
-        // Generator에 NS 내 전체 리소스 삭제 요청 (NS는 유지)
-        try {
-            val namespace = getCourseNamespace(course)
-            generatorWebClient.delete()
-                .uri("/api/namespace/$namespace/resources")
-                .header("Authorization", "Bearer $token")
-                .retrieve()
-                .bodyToMono(Map::class.java)
-                .block()
-        } catch (ex: Exception) {
-            println("Warning: NS 리소스 삭제 실패: ${ex.message}")
-        }
-
-        // jcode 테이블에서 해당 course의 모든 레코드 삭제
-        val jcodes = jCodeRepository.findByCourseId(courseId)
-        jCodeRepository.deleteAll(jcodes)
-
-        // 상태 변경
-        course.status = CourseStatus.ENDED
-        course.endedAt = LocalDateTime.now()
+        course.status = CourseStatus.TERMINATING
         courseRepository.save(course)
+        infrastructureOperationStore.enqueue(course.id, CourseInfrastructureAction.DELETE_WORKLOADS)
     }
 
     // 강의 아카이브: status → ARCHIVED, NS 삭제
     @Transactional
-    fun archiveCourse(courseId: Long, token: String) {
+    fun archiveCourse(courseId: Long) {
         val course = courseRepository.findById(courseId)
             .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "Course not found") }
 
@@ -273,26 +248,14 @@ class CourseService(
             throw ResponseStatusException(HttpStatus.BAD_REQUEST, "ENDED 상태의 강의만 아카이브할 수 있습니다.")
         }
 
-        // Generator에 NS 삭제 요청
-        try {
-            val namespace = getCourseNamespace(course)
-            generatorWebClient.delete()
-                .uri("/api/namespace/$namespace")
-                .header("Authorization", "Bearer $token")
-                .retrieve()
-                .bodyToMono(Map::class.java)
-                .block()
-        } catch (ex: Exception) {
-            println("Warning: NS 삭제 실패: ${ex.message}")
-        }
-
-        course.status = CourseStatus.ARCHIVED
+        course.status = CourseStatus.ARCHIVING
         courseRepository.save(course)
+        infrastructureOperationStore.enqueue(course.id, CourseInfrastructureAction.DELETE_NAMESPACE)
     }
 
     // 강의 재개설: status → ACTIVE, NS 재생성
     @Transactional
-    fun reopenCourse(courseId: Long, token: String) {
+    fun reopenCourse(courseId: Long) {
         val course = courseRepository.findById(courseId)
             .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "Course not found") }
 
@@ -300,24 +263,15 @@ class CourseService(
             throw ResponseStatusException(HttpStatus.BAD_REQUEST, "ENDED 상태의 강의만 재개설할 수 있습니다.")
         }
 
-        // Generator에 NS 재생성 요청
-        try {
-            val namespace = getCourseNamespace(course)
-            generatorWebClient.post()
-                .uri("/api/namespace")
-                .header("Authorization", "Bearer $token")
-                .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue(mapOf("namespace" to namespace))
-                .retrieve()
-                .bodyToMono(Map::class.java)
-                .block()
-        } catch (ex: Exception) {
-            throw ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "NS 재생성 실패: ${ex.message}")
-        }
-
-        course.status = CourseStatus.ACTIVE
-        course.endedAt = null
+        course.status = CourseStatus.PROVISIONING
         courseRepository.save(course)
+        infrastructureOperationStore.enqueue(course.id, CourseInfrastructureAction.PROVISION_NAMESPACE)
+    }
+
+    fun retryInfrastructure(courseId: Long) {
+        if (!infrastructureOperationStore.retryFailed(courseId)) {
+            throw ResponseStatusException(HttpStatus.CONFLICT, "재시도할 실패 작업이 없습니다.")
+        }
     }
 
     // 전체 강의 조회

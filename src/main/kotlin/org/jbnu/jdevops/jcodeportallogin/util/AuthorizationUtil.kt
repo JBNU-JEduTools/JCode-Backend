@@ -14,7 +14,7 @@ object AuthorizationUtil {
         userCoursesRepository: UserCoursesRepository
     ) {
         when (currentUserRole) {
-            RoleType.STUDENT -> {
+            RoleType.STUDENT, RoleType.ASSISTANT -> {
                 // 수업별 조교 역할 확인
                 val userCourses = userCoursesRepository.findByUserIdAndCourseId(currentUserId, courseId)
                 if (userCourses?.role == RoleType.ASSISTANT) {
@@ -26,11 +26,12 @@ object AuthorizationUtil {
                 }
             }
             RoleType.PROFESSOR -> {
-                if (!userCoursesRepository.existsByUserIdAndCourseId(currentUserId, courseId)) {
-                    throw ResponseStatusException(HttpStatus.FORBIDDEN, "해당 강의에 권한이 없습니다.")
+                val membership = userCoursesRepository.findByUserIdAndCourseId(currentUserId, courseId)
+                if (membership?.role != RoleType.PROFESSOR) {
+                    throw ResponseStatusException(HttpStatus.FORBIDDEN, "해당 강의의 담당 교수 권한이 없습니다.")
                 }
             }
-            else -> {}  // ADMIN은 모든 권한을 가짐
+            RoleType.ADMIN -> {}  // ADMIN은 모든 권한을 가짐
         }
     }
 }

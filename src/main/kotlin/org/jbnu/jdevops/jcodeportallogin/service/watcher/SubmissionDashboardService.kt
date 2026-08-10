@@ -2,20 +2,22 @@ package org.jbnu.jdevops.jcodeportallogin.service.watcher
 
 import org.jbnu.jdevops.jcodeportallogin.dto.watcher.StudentSubmissionSummary
 import org.jbnu.jdevops.jcodeportallogin.dto.watcher.SubmissionDashboardDto
-import org.jbnu.jdevops.jcodeportallogin.dto.watcher.WatcherBuildLogDto
-import org.jbnu.jdevops.jcodeportallogin.dto.watcher.WatcherRunLogDto
+import org.jbnu.jdevops.jcodeportallogin.dto.watcher.WatcherStatus
 import org.jbnu.jdevops.jcodeportallogin.entity.RoleType
 import org.jbnu.jdevops.jcodeportallogin.repo.AssignmentRepository
 import org.jbnu.jdevops.jcodeportallogin.repo.CourseRepository
 import org.jbnu.jdevops.jcodeportallogin.repo.UserCoursesRepository
 import org.jbnu.jdevops.jcodeportallogin.repo.UserRepository
 import org.springframework.beans.factory.annotation.Qualifier
-import org.springframework.core.ParameterizedTypeReference
 import org.springframework.http.HttpStatus
+import org.springframework.http.MediaType
 import org.springframework.stereotype.Service
 import org.springframework.web.reactive.function.client.WebClient
 import org.springframework.web.server.ResponseStatusException
 import java.time.Duration
+import java.time.LocalDateTime
+import com.fasterxml.jackson.annotation.JsonProperty
+import org.slf4j.LoggerFactory
 
 @Service
 class SubmissionDashboardService(
@@ -26,26 +28,51 @@ class SubmissionDashboardService(
     private val userRepository: UserRepository,
     private val userCoursesRepository: UserCoursesRepository
 ) {
+    private val logger = LoggerFactory.getLogger(javaClass)
+
+    private data class WatcherFetch<T>(val value: T, val available: Boolean)
+
+    private data class BulkDashboardRequest(
+        @JsonProperty("student_ids") val studentIds: List<Int>
+    )
+
+    private data class BulkStudentSummary(
+        @JsonProperty("student_id") val studentId: Int,
+        @JsonProperty("build_count") val buildCount: Int,
+        @JsonProperty("build_fail_count") val buildFailCount: Int,
+        @JsonProperty("run_count") val runCount: Int,
+        @JsonProperty("total_size_change") val totalSizeChange: Long,
+        @JsonProperty("max_single_change") val maxSingleChange: Long,
+        @JsonProperty("first_activity") val firstActivity: String?,
+        @JsonProperty("last_activity") val lastActivity: String?
+    )
+
+    private data class BulkDashboardResponse(val students: List<BulkStudentSummary> = emptyList())
+
+    private fun <T> fetchWatcher(defaultValue: T, description: String, call: () -> T?): WatcherFetch<T> = try {
+        WatcherFetch(call() ?: defaultValue, true)
+    } catch (ex: Exception) {
+        logger.warn("Watcher call failed: {}", description, ex)
+        WatcherFetch(defaultValue, false)
+    }
 
     fun getDashboard(courseId: Long, assignmentId: Long, email: String): SubmissionDashboardDto {
         val user = userRepository.findByEmail(email)
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "User not found")
 
-        // 권한 검증: ADMIN, PROFESSOR, 또는 해당 과목 ASSISTANT만 접근 가능
-        when (user.role) {
-            RoleType.ADMIN, RoleType.PROFESSOR -> { /* OK */ }
-            else -> {
-                val isAssistant = userCoursesRepository.existsByCourseIdAndUserIdAndRole(courseId, user.id, RoleType.ASSISTANT)
-                if (!isAssistant) {
-                    throw ResponseStatusException(HttpStatus.FORBIDDEN, "대시보드 접근 권한이 없습니다.")
-                }
+        // 전역 역할이 아니라 해당 강의에서의 역할로 권한을 판단한다.
+        if (user.role != RoleType.ADMIN) {
+            val membership = userCoursesRepository.findByUserIdAndCourseId(user.id, courseId)
+                ?: throw ResponseStatusException(HttpStatus.FORBIDDEN, "해당 강의에 소속되어 있지 않습니다.")
+            if (membership.role !in setOf(RoleType.PROFESSOR, RoleType.ASSISTANT)) {
+                throw ResponseStatusException(HttpStatus.FORBIDDEN, "대시보드 접근 권한이 없습니다.")
             }
         }
 
         val course = courseRepository.findById(courseId)
             .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "Course not found") }
 
-        val assignment = assignmentRepository.findById(assignmentId)
+        val assignment = assignmentRepository.findByIdAndCourseId(assignmentId, courseId)
             .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "Assignment not found") }
 
         if (assignment.course.id != course.id) {
@@ -57,81 +84,57 @@ class SubmissionDashboardService(
         // 해당 과목 학생 목록 조회
         val studentCourses = userCoursesRepository.findByCourseIdAndRole(courseId, RoleType.STUDENT)
 
-        val summaries = studentCourses.mapNotNull { uc ->
-            val student = uc.user
-            val sNum = student.studentNum ?: return@mapNotNull null
-            try {
-                buildStudentSummary(classDiv, assignment.watcherHwName(), sNum, student.name)
-            } catch (ex: Exception) {
-                StudentSubmissionSummary(
-                    studentNum = sNum,
-                    studentName = student.name,
-                    buildCount = 0,
-                    buildFailCount = 0,
-                    runCount = 0,
-                    totalSizeChange = 0,
-                    maxSingleChange = 0,
-                    codeVelocity = 0.0,
-                    totalWorkMinutes = 0,
-                    firstActivity = null,
-                    lastActivity = null,
-                    flags = listOf("⚠️ 활동 없음")
-                )
+        val students = studentCourses.mapNotNull { membership ->
+            membership.user.studentNum?.let { it to membership.user.name }
+        }
+        val watcherResult = if (students.isEmpty()) {
+            WatcherFetch(BulkDashboardResponse(), true)
+        } else fetchWatcher(BulkDashboardResponse(), "dashboard bulk summary") {
+            webClient.post()
+                .uri("/api/dashboard/{class_div}/{hw_name}/summary", classDiv, assignment.watcherHwName())
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(BulkDashboardRequest(students.map { it.first }))
+                .retrieve()
+                .bodyToMono(BulkDashboardResponse::class.java)
+                .timeout(Duration.ofSeconds(10))
+                .block()
+        }
+        val watcherStudents = watcherResult.value.students.associateBy { it.studentId }
+        val summaries = students.map { (studentNum, studentName) ->
+            val summary = watcherStudents[studentNum]
+            if (!watcherResult.available || summary == null) {
+                emptyStudentSummary(studentNum, studentName, WatcherStatus.UNAVAILABLE)
+            } else {
+                buildStudentSummary(summary, studentName)
             }
         }
 
         val flaggedCount = summaries.count { it.flags.isNotEmpty() }
+        val dashboardStatus = when {
+            summaries.isNotEmpty() && summaries.all { it.watcherStatus == WatcherStatus.UNAVAILABLE } -> WatcherStatus.UNAVAILABLE
+            summaries.any { it.watcherStatus != WatcherStatus.OK } -> WatcherStatus.PARTIAL
+            else -> WatcherStatus.OK
+        }
 
         return SubmissionDashboardDto(
             assignmentName = assignment.name,
             totalStudents = studentCourses.size,
             submittedCount = summaries.count { it.buildCount > 0 || it.totalSizeChange > 0 },
             flaggedCount = flaggedCount,
+            watcherStatus = dashboardStatus,
             students = summaries
         )
     }
 
-    private fun buildStudentSummary(classDiv: String, hwName: String, studentNum: Int, studentName: String?): StudentSubmissionSummary {
-        // 빌드 로그 조회
-        val buildLogs = try {
-            webClient.get()
-                .uri("/api/{class_div}/{hw_name}/{student_num}/logs/build", classDiv, hwName, studentNum)
-                .retrieve()
-                .bodyToMono(object : ParameterizedTypeReference<List<WatcherBuildLogDto>>() {})
-                .block() ?: emptyList()
-        } catch (ex: Exception) { emptyList() }
-
-        // 실행 로그 조회
-        val runLogs = try {
-            webClient.get()
-                .uri("/api/{class_div}/{hw_name}/{student_num}/logs/run", classDiv, hwName, studentNum)
-                .retrieve()
-                .bodyToMono(object : ParameterizedTypeReference<List<WatcherRunLogDto>>() {})
-                .block() ?: emptyList()
-        } catch (ex: Exception) { emptyList() }
-
-        // 그래프 데이터 (코드 크기 변화) 조회 — 1분 간격
-        val graphData = try {
-            webClient.get()
-                .uri("/api/graph_data/{class_div}/{hw_name}/{student_num}/{interval}", classDiv, hwName, studentNum, 1)
-                .retrieve()
-                .bodyToMono(org.jbnu.jdevops.jcodeportallogin.dto.watcher.GraphDataListDto::class.java)
-                .block()
-        } catch (ex: Exception) { null }
-
-        val buildCount = buildLogs.size
-        val buildFailCount = buildLogs.count { it.exit_code != 0 }
-        val runCount = runLogs.size
-
-        // 코드 크기 변화 분석
-        val trends = graphData?.trends ?: emptyList()
-        val totalSizeChange = trends.sumOf { kotlin.math.abs(it.size_change) }
-        val maxSingleChange = trends.maxOfOrNull { kotlin.math.abs(it.size_change) } ?: 0L
-
-        // 시간 분석
-        val allTimestamps = buildLogs.map { it.timestamp } + runLogs.map { it.timestamp }
-        val firstActivity = allTimestamps.minOrNull()
-        val lastActivity = allTimestamps.maxOrNull()
+    private fun buildStudentSummary(summary: BulkStudentSummary, studentName: String?): StudentSubmissionSummary {
+        val watcherStatus = WatcherStatus.OK
+        val buildCount = summary.buildCount
+        val buildFailCount = summary.buildFailCount
+        val runCount = summary.runCount
+        val totalSizeChange = summary.totalSizeChange
+        val maxSingleChange = summary.maxSingleChange
+        val firstActivity = summary.firstActivity?.let(LocalDateTime::parse)
+        val lastActivity = summary.lastActivity?.let(LocalDateTime::parse)
         val totalWorkMinutes = if (firstActivity != null && lastActivity != null) {
             Duration.between(firstActivity, lastActivity).toMinutes()
         } else 0L
@@ -145,6 +148,10 @@ class SubmissionDashboardService(
 
         // 플래그 판정
         val flags = mutableListOf<String>()
+
+        if (watcherStatus == WatcherStatus.OK && buildCount == 0 && runCount == 0 && totalSizeChange == 0L) {
+            flags.add("⚠️ 활동 없음")
+        }
 
         // 1. 컴파일 미시도
         if (buildCount == 0 && totalSizeChange > 0) {
@@ -167,7 +174,7 @@ class SubmissionDashboardService(
         }
 
         return StudentSubmissionSummary(
-            studentNum = studentNum,
+            studentNum = summary.studentId,
             studentName = studentName,
             buildCount = buildCount,
             buildFailCount = buildFailCount,
@@ -178,7 +185,25 @@ class SubmissionDashboardService(
             totalWorkMinutes = totalWorkMinutes,
             firstActivity = firstActivity?.toString(),
             lastActivity = lastActivity?.toString(),
-            flags = flags
+            flags = flags,
+            watcherStatus = watcherStatus
         )
     }
+
+    private fun emptyStudentSummary(studentNum: Int, studentName: String?, status: WatcherStatus) =
+        StudentSubmissionSummary(
+            studentNum = studentNum,
+            studentName = studentName,
+            buildCount = 0,
+            buildFailCount = 0,
+            runCount = 0,
+            totalSizeChange = 0,
+            maxSingleChange = 0,
+            codeVelocity = 0.0,
+            totalWorkMinutes = 0,
+            firstActivity = null,
+            lastActivity = null,
+            flags = emptyList(),
+            watcherStatus = status
+        )
 }

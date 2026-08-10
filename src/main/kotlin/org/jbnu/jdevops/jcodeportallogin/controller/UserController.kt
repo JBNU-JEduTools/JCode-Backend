@@ -149,7 +149,9 @@ class UserController(
         val email = authentication.principal as? String
             ?: throw ResponseStatusException(HttpStatus.UNAUTHORIZED, "Missing email in authentication")
 
-        userService.leaveCourse(courseId, email)
+        val token = request.getHeader("Authorization")?.removePrefix("Bearer ")?.trim()
+            ?: throw ResponseStatusException(HttpStatus.UNAUTHORIZED, "Authorization token is required")
+        userService.leaveCourse(courseId, email, token)
 
         // courseId와 메시지를 Map으로 묶어서 반환
         val response = mapOf(

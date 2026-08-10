@@ -1,0 +1,62 @@
+name: Deploy backend image
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Deployment environment"
+        required: true
+        type: choice
+        options: [dev]
+      digest:
+        description: "Backend digest verified in dev"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: harbor.jbnu.ac.kr/jdevops/jcode-backend
+
+jobs:
+  deploy:
+    runs-on: ubuntu-22.04
+    environment: ${{ inputs.target }}
+    steps:
+      - uses: docker/setup-buildx-action@v3
+      - name: Login to Harbor
+        env:
+          HARBOR_USERNAME: ${{ secrets.HARBOR_USERNAME }}
+          HARBOR_PASSWORD: ${{ secrets.HARBOR_PASSWORD }}
+        run: |
+          for attempt in 1 2 3 4 5; do
+            if printf '%s' "$HARBOR_PASSWORD" | timeout 30 docker login harbor.jbnu.ac.kr --username "$HARBOR_USERNAME" --password-stdin; then
+              exit 0
+            fi
+            sleep $((attempt * 5))
+          done
+          exit 1
+      - name: Verify immutable artifact
+        env:
+          IMAGE_DIGEST: ${{ inputs.digest }}
+        run: |
+          [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          docker buildx imagetools inspect "${IMAGE}@${IMAGE_DIGEST}"
+      - uses: azure/setup-kubectl@v4
+      - uses: azure/k8s-set-context@v4
+        with:
+          method: kubeconfig
+          kubeconfig: ${{ secrets.KUBE_CONFIG }}
+      - name: Deploy verified image
+        env:
+          IMAGE_DIGEST: ${{ inputs.digest }}
+          KUBE_NAMESPACE: ${{ vars.KUBE_NAMESPACE }}
+          KUBE_DEPLOYMENT: ${{ vars.KUBE_DEPLOYMENT }}
+          KUBE_CONTAINER: ${{ vars.KUBE_CONTAINER }}
+        run: |
+          : "${KUBE_NAMESPACE:?KUBE_NAMESPACE environment variable is required}"
+          : "${KUBE_DEPLOYMENT:?KUBE_DEPLOYMENT environment variable is required}"
+          : "${KUBE_CONTAINER:?KUBE_CONTAINER environment variable is required}"
+          kubectl set image "deployment/${KUBE_DEPLOYMENT}" "${KUBE_CONTAINER}=${IMAGE}@${IMAGE_DIGEST}" -n "$KUBE_NAMESPACE"
+          kubectl rollout status "deployment/${KUBE_DEPLOYMENT}" -n "$KUBE_NAMESPACE" --timeout=5m

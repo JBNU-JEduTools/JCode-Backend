@@ -1,6 +1,7 @@
 package org.jbnu.jdevops.jcodeportallogin.service
 
 import org.jbnu.jdevops.jcodeportallogin.entity.Course
+import org.jbnu.jdevops.jcodeportallogin.entity.CourseStatus
 import org.jbnu.jdevops.jcodeportallogin.entity.RoleType
 import org.jbnu.jdevops.jcodeportallogin.entity.User
 import org.jbnu.jdevops.jcodeportallogin.entity.UserCourses
@@ -37,6 +38,7 @@ class UserServiceRbacTest {
     private val redisTemplate = mock(StringRedisTemplate::class.java)
     private val setOperations = mock(SetOperations::class.java) as SetOperations<String, String>
     private val redisService = RedisService(redisTemplate)
+    private val jCodeService = mock(JCodeService::class.java)
 
     private val service = UserService(
         userRepository,
@@ -46,7 +48,8 @@ class UserServiceRbacTest {
         assignmentRepository,
         passwordEncoder,
         courseRepository,
-        redisService
+        redisService,
+        jCodeService
     )
 
     init {
@@ -67,7 +70,7 @@ class UserServiceRbacTest {
         `when`(userCoursesRepository.findByUserIdAndCourseId(student.id, course.id)).thenReturn(targetUserCourse)
 
         val ex = assertThrows<ResponseStatusException> {
-            service.chaseOutCourse(student.id, course.id, professor.email)
+            service.chaseOutCourse(student.id, course.id, professor.email, "token")
         }
 
         assertEquals(HttpStatus.FORBIDDEN, ex.statusCode)
@@ -87,13 +90,32 @@ class UserServiceRbacTest {
         `when`(courseRepository.findById(course.id)).thenReturn(Optional.of(course))
         `when`(userCoursesRepository.findByUserIdAndCourseId(professor.id, course.id)).thenReturn(professorCourse)
         `when`(userCoursesRepository.findByUserIdAndCourseId(student.id, course.id)).thenReturn(targetUserCourse)
-        `when`(jcodeRepository.findByUserCourse(targetUserCourse)).thenReturn(null)
-
-        val result = service.chaseOutCourse(student.id, course.id, professor.email)
+        val result = service.chaseOutCourse(student.id, course.id, professor.email, "token")
 
         assertEquals(course.id, result)
+        verify(jCodeService).deleteAllJCodesForUserCourse(targetUserCourse, "token")
         verify(userCoursesRepository).delete(targetUserCourse)
+        verify(redisTemplate).delete("user:${student.email}:course:${course.code}:${course.clss}")
+        verify(redisTemplate).delete("user:${student.email}:course:${course.code}:${course.clss}:snapshot")
         verify(setOperations).remove("course:${course.code}:${course.clss}:managers", student.email)
+    }
+
+    @Test
+    fun `user cannot join ended course`() {
+        val course = course().apply { status = CourseStatus.ENDED }
+        val user = user(2, "student@example.com", RoleType.STUDENT)
+        val rawKey = "ALG-1-secret"
+
+        `when`(courseRepository.findByCodeAndClss(course.code, course.clss)).thenReturn(listOf(course))
+        `when`(passwordEncoder.matches(rawKey, course.courseKey)).thenReturn(true)
+        `when`(userRepository.findByEmail(user.email)).thenReturn(user)
+
+        val ex = assertThrows<ResponseStatusException> {
+            service.joinCourse(user.email, rawKey)
+        }
+
+        assertEquals(HttpStatus.CONFLICT, ex.statusCode)
+        verify(userCoursesRepository, never()).save(any(UserCourses::class.java))
     }
 
     private fun course() = Course(

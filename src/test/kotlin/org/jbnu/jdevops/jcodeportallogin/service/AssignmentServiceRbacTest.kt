@@ -4,6 +4,7 @@ import org.jbnu.jdevops.jcodeportallogin.entity.Assignment
 import org.jbnu.jdevops.jcodeportallogin.entity.Course
 import org.jbnu.jdevops.jcodeportallogin.entity.RoleType
 import org.jbnu.jdevops.jcodeportallogin.entity.User
+import org.jbnu.jdevops.jcodeportallogin.entity.UserCourses
 import org.jbnu.jdevops.jcodeportallogin.repo.AssignmentRepository
 import org.jbnu.jdevops.jcodeportallogin.repo.CourseRepository
 import org.jbnu.jdevops.jcodeportallogin.repo.UserCoursesRepository
@@ -39,31 +40,31 @@ class AssignmentServiceRbacTest {
     @Test
     fun `assistant in another course cannot delete assignment`() {
         val assistant = user(1, "ta@example.com", RoleType.STUDENT)
-        val managedCourseId = 10L
         val targetCourseId = 20L
 
         `when`(userRepository.findByEmail(assistant.email)).thenReturn(assistant)
-        `when`(
-            userCoursesRepository.existsByCourseIdAndUserIdAndRole(
-                targetCourseId,
-                assistant.id,
-                RoleType.ASSISTANT
-            )
-        ).thenReturn(false)
-        `when`(
-            userCoursesRepository.existsByCourseIdAndUserIdAndRole(
-                managedCourseId,
-                assistant.id,
-                RoleType.ASSISTANT
-            )
-        ).thenReturn(true)
+        `when`(userCoursesRepository.findByUserIdAndCourseId(assistant.id, targetCourseId)).thenReturn(null)
 
         val ex = assertThrows<ResponseStatusException> {
             service.deleteAssignment(targetCourseId, 100L, assistant.email)
         }
 
         assertEquals(HttpStatus.FORBIDDEN, ex.statusCode)
-        verify(assignmentRepository, never()).deleteById(100L)
+        verify(assignmentRepository, never()).delete(org.mockito.ArgumentMatchers.any(Assignment::class.java))
+    }
+
+    @Test
+    fun `global professor without course professor membership cannot manage assignment`() {
+        val professor = user(1, "professor@example.com", RoleType.PROFESSOR)
+        `when`(userRepository.findByEmail(professor.email)).thenReturn(professor)
+        `when`(userCoursesRepository.findByUserIdAndCourseId(professor.id, 20L)).thenReturn(null)
+
+        val ex = assertThrows<ResponseStatusException> {
+            service.deleteAssignment(20L, 100L, professor.email)
+        }
+
+        assertEquals(HttpStatus.FORBIDDEN, ex.statusCode)
+        verify(assignmentRepository, never()).delete(org.mockito.ArgumentMatchers.any(Assignment::class.java))
     }
 
     @Test
@@ -73,18 +74,16 @@ class AssignmentServiceRbacTest {
         val assignmentId = 100L
 
         `when`(userRepository.findByEmail(assistant.email)).thenReturn(assistant)
-        `when`(
-            userCoursesRepository.existsByCourseIdAndUserIdAndRole(
-                courseId,
-                assistant.id,
-                RoleType.ASSISTANT
-            )
-        ).thenReturn(true)
-        `when`(assignmentRepository.existsById(assignmentId)).thenReturn(true)
+        val course = course(courseId)
+        val assignment = assignment(assignmentId, course, "title", "dir")
+        `when`(userCoursesRepository.findByUserIdAndCourseId(assistant.id, courseId))
+            .thenReturn(userCourse(assistant, course, RoleType.ASSISTANT))
+        `when`(courseRepository.findById(courseId)).thenReturn(Optional.of(course))
+        `when`(assignmentRepository.findByIdAndCourseId(assignmentId, courseId)).thenReturn(Optional.of(assignment))
 
         service.deleteAssignment(courseId, assignmentId, assistant.email)
 
-        verify(assignmentRepository).deleteById(assignmentId)
+        verify(assignmentRepository).delete(assignment)
     }
 
     @Test
@@ -100,15 +99,10 @@ class AssignmentServiceRbacTest {
         )
 
         `when`(userRepository.findByEmail(assistant.email)).thenReturn(assistant)
-        `when`(
-            userCoursesRepository.existsByCourseIdAndUserIdAndRole(
-                course.id,
-                assistant.id,
-                RoleType.ASSISTANT
-            )
-        ).thenReturn(true)
+        `when`(userCoursesRepository.findByUserIdAndCourseId(assistant.id, course.id))
+            .thenReturn(userCourse(assistant, course, RoleType.ASSISTANT))
         `when`(courseRepository.findById(course.id)).thenReturn(Optional.of(course))
-        `when`(assignmentRepository.findById(assignment.id)).thenReturn(Optional.of(assignment))
+        `when`(assignmentRepository.findByIdAndCourseId(assignment.id, course.id)).thenReturn(Optional.of(assignment))
         `when`(assignmentRepository.save(org.mockito.ArgumentMatchers.any(Assignment::class.java)))
             .thenAnswer { it.arguments[0] as Assignment }
 
@@ -116,6 +110,7 @@ class AssignmentServiceRbacTest {
 
         assertEquals("new title", result.assignmentName)
         assertEquals("old-dir", result.dirName)
+        assert(result.updatedAt != assignment.updatedAt.toString())
     }
 
     private fun course(id: Long) = Course(
@@ -145,5 +140,12 @@ class AssignmentServiceRbacTest {
         dirName = dirName,
         kickoffDate = LocalDateTime.of(2026, 1, 1, 0, 0),
         deadlineDate = LocalDateTime.of(2026, 1, 2, 0, 0)
+    )
+
+    private fun userCourse(user: User, course: Course, role: RoleType) = UserCourses(
+        id = user.id,
+        user = user,
+        course = course,
+        role = role
     )
 }

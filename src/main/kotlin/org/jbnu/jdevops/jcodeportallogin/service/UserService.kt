@@ -27,7 +27,8 @@ class UserService(
     private val assignmentRepository: AssignmentRepository,
     private val passwordEncoder: PasswordEncoder,
     private val courseRepository: CourseRepository,
-    private val redisService: RedisService
+    private val redisService: RedisService,
+    private val jCodeService: JCodeService
 ) {
     @Transactional
     fun register(registerUserDto: RegisterUserDto): ResponseEntity<String> {
@@ -225,6 +226,10 @@ class UserService(
         val course = courses.firstOrNull { passwordEncoder.matches(courseKey, it.courseKey) }
             ?: throw ResponseStatusException(HttpStatus.UNAUTHORIZED, "Incorrect course key")
 
+        if (course.status != CourseStatus.ACTIVE) {
+            throw ResponseStatusException(HttpStatus.CONFLICT, "ACTIVE 상태의 강의에만 가입할 수 있습니다.")
+        }
+
         // 사용자 조회
         val user = userRepository.findByEmail(email)
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "User not found")
@@ -264,7 +269,7 @@ class UserService(
 
     // 유저 강의 탈퇴 (연관된 정보 삭제)
     @Transactional
-    fun leaveCourse(courseId: Long, email: String): Long {
+    fun leaveCourse(courseId: Long, email: String, token: String): Long {
         val user = userRepository.findByEmail(email)
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "User not found")
 
@@ -274,10 +279,9 @@ class UserService(
         val userCourse = userCoursesRepository.findByUserIdAndCourseId(user.id, course.id)
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "User is not enrolled in this course")
 
-        // 해당 강의에서 사용된 JCode 삭제
-        jcodeRepository.findByUserCourse(userCourse)?.let {
-            jcodeRepository.delete(it)
-        }
+        // Kubernetes Deployment/Service를 먼저 회수한 뒤 DB 접근권한을 제거한다.
+        jCodeService.deleteAllJCodesForUserCourse(userCourse, token)
+        redisService.deleteUserCourseAccess(email, course.code, course.clss)
 
         // UserCourses에서 유저 삭제 (강의 탈퇴)
         userCoursesRepository.delete(userCourse)
@@ -397,7 +401,7 @@ class UserService(
 
     // 유저 강의 탈퇴 (연관된 정보 삭제)
     @Transactional
-    fun chaseOutCourse(userId: Long, courseId: Long, email: String): Long {
+    fun chaseOutCourse(userId: Long, courseId: Long, email: String, token: String): Long {
         val currentUser = userRepository.findByEmail(email)
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "You're Info not found")
 
@@ -418,10 +422,9 @@ class UserService(
         val userCourse = userCoursesRepository.findByUserIdAndCourseId(user.id, course.id)
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "User is not enrolled in this course")
 
-        // 해당 강의에서 사용된 JCode 삭제
-        jcodeRepository.findByUserCourse(userCourse)?.let {
-            jcodeRepository.delete(it)
-        }
+        // Kubernetes Deployment/Service를 먼저 회수한 뒤 DB 접근권한을 제거한다.
+        jCodeService.deleteAllJCodesForUserCourse(userCourse, token)
+        redisService.deleteUserCourseAccess(user.email, course.code, course.clss)
 
         // UserCourses에서 유저 삭제 (강의 탈퇴)
         userCoursesRepository.delete(userCourse)

@@ -29,7 +29,7 @@ class WatcherAssignmentService(
         val course = courseRepository.findById(courseId)
             .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "Course not found") }
 
-        val assignment = assignmentRepository.findById(assignmentId)
+        val assignment = assignmentRepository.findByIdAndCourseId(assignmentId, courseId)
             .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "Assignment not found") }
 
         if (assignment.course.id != course.id) {
@@ -61,7 +61,7 @@ class WatcherAssignmentService(
         val course = courseRepository.findById(courseId)
             .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "Course not found") }
 
-        val assignment = assignmentRepository.findById(assignmentId)
+        val assignment = assignmentRepository.findByIdAndCourseId(assignmentId, courseId)
             .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "Assignment not found") }
 
         if (assignment.course.id != course.id) {
@@ -148,7 +148,7 @@ class WatcherAssignmentService(
         val course = courseRepository.findById(courseId)
             .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "Course not found") }
 
-        val assignment = assignmentRepository.findById(assignmentId)
+        val assignment = assignmentRepository.findByIdAndCourseId(assignmentId, courseId)
             .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "Assignment not found") }
 
         if (assignment.course.id != course.id) {
@@ -177,7 +177,7 @@ class WatcherAssignmentService(
         val course = courseRepository.findById(courseId)
             .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "Course not found") }
 
-        val assignment = assignmentRepository.findById(assignmentId)
+        val assignment = assignmentRepository.findByIdAndCourseId(assignmentId, courseId)
             .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "Assignment not found") }
 
         if (assignment.course.id != course.id) {

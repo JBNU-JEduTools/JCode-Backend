@@ -5,8 +5,10 @@ WORKDIR /app
 # 전체 프로젝트 소스 복사
 COPY . .
 
-# Gradle Wrapper를 사용하여 Spring Boot JAR 파일 빌드 (Kotlin 1.9.22 포함) - test 제외
-RUN chmod +x gradlew && ./gradlew clean build -x test --no-daemon
+# 베이스 이미지의 Gradle 8.8을 사용해 wrapper 재다운로드를 피한다.
+# Kotlin 컴파일러를 in-process로 실행해 컨테이너 빌드의 daemon 임시 파일 race도 제거한다.
+RUN gradle clean build -x test --no-daemon \
+    -Pkotlin.compiler.execution.strategy=in-process
 
 # ---------- Run Stage ----------
 FROM eclipse-temurin:21-jre-jammy

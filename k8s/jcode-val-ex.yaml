@@ -25,7 +25,11 @@ data:
   # Service Url
   ROUTER_URL: "https://router.example.com/jcode/"
   WATCHER_URL: "https://watcher.example.com"
-  GENERATOR_URL: "https://generator.example.com"
+  GENERATOR_BOOTSTRAP_URL: "http://jcode-bootstrap-svc.watcher.svc.cluster.local:5000"
+  GENERATOR_WORKSPACE_URL: "http://jcode-generator-svc.watcher.svc.cluster.local:5000"
+  GENERATOR_AUTH_ISSUER: "jcode-backend"
+  GENERATOR_AUTH_AUDIENCE: "jcode-generator"
+  GENERATOR_AUTH_SUBJECT: "jcode-backend"
 
   # Keycloak OAuth2
   SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_KEYCLOAK_CLIENTID: "myclient"
@@ -124,3 +128,6 @@ data:
   # jwt (jwtSecret, jwtRefreshSecret)
   JWT_SECRET: "and0U2VjcmV0"
   JWT_REFRESH_SECRET: "and0UmVmcmVzaFNlY3JldA=="
+
+  # Backend→Generator only. Replace through the cluster Secret manager.
+  GENERATOR_AUTH_SECRET: "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
