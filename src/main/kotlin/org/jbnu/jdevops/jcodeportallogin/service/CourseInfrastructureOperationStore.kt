@@ -6,7 +6,6 @@ import org.jbnu.jdevops.jcodeportallogin.entity.CourseInfrastructureOperationSta
 import org.jbnu.jdevops.jcodeportallogin.entity.CourseStatus
 import org.jbnu.jdevops.jcodeportallogin.repo.CourseInfrastructureOperationRepository
 import org.jbnu.jdevops.jcodeportallogin.repo.CourseRepository
-import org.jbnu.jdevops.jcodeportallogin.repo.JCodeRepository
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.data.domain.PageRequest
 import org.springframework.stereotype.Service
@@ -26,7 +25,6 @@ data class ClaimedCourseInfrastructureOperation(
 class CourseInfrastructureOperationStore(
     private val operationRepository: CourseInfrastructureOperationRepository,
     private val courseRepository: CourseRepository,
-    private val jCodeRepository: JCodeRepository,
     @Value("\${course.lifecycle.max-attempts:10}") private val maxAttempts: Int,
     @Value("\${course.lifecycle.lock-timeout-seconds:300}") private val lockTimeoutSeconds: Long
 ) {
@@ -83,7 +81,6 @@ class CourseInfrastructureOperationStore(
                     course.endedAt = null
                 }
                 CourseInfrastructureAction.DELETE_WORKLOADS -> {
-                    jCodeRepository.deleteAll(jCodeRepository.findByCourseId(course.id))
                     course.status = CourseStatus.ENDED
                     course.endedAt = LocalDateTime.now()
                 }

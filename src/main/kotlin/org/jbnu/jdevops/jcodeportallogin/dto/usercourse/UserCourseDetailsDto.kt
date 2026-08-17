@@ -6,6 +6,9 @@ import jakarta.validation.constraints.Size
 import org.jbnu.jdevops.jcodeportallogin.dto.assignment.AssignmentDto
 import org.jbnu.jdevops.jcodeportallogin.entity.CourseStatus
 import org.jbnu.jdevops.jcodeportallogin.entity.RoleType
+import org.jbnu.jdevops.jcodeportallogin.entity.CourseEnvironmentProfile
+import org.jbnu.jdevops.jcodeportallogin.entity.MembershipStatus
+import org.jbnu.jdevops.jcodeportallogin.entity.WorkspaceScope
 
 data class UserCourseDetailsDto(
     val courseId: Long,
@@ -30,7 +33,11 @@ data class UserCourseDetailsDto(
     val pracEnabled: Boolean = false,
     val pracCount: Int = 0,
     val status: CourseStatus = CourseStatus.ACTIVE,
+    val environmentProfile: CourseEnvironmentProfile = CourseEnvironmentProfile.ALGORITHM,
+    val workspaceScope: WorkspaceScope = WorkspaceScope.COURSE,
     val courseRole: RoleType? = null,
+    val membershipStatus: MembershipStatus = MembershipStatus.READY,
+    val membershipError: String? = null,
     val assignments: List<AssignmentDto>,
     val jcodeUrl: String?
 )

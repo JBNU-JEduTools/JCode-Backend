@@ -7,6 +7,7 @@ data:
   SPRING_APPLICATION_NAME: "jcodehub"
 
   SERVER_PORT: "8080"
+  SPRING_JACKSON_TIME_ZONE: "Asia/Seoul"
 
   # 에러 메세지 다국어
   SPRING_MESSAGES_BASENAME: "ValidationMessages"
@@ -25,11 +26,18 @@ data:
   # Service Url
   ROUTER_URL: "https://router.example.com/jcode/"
   WATCHER_URL: "https://watcher.example.com"
-  GENERATOR_BOOTSTRAP_URL: "http://jcode-bootstrap-svc.watcher.svc.cluster.local:5000"
-  GENERATOR_WORKSPACE_URL: "http://jcode-generator-svc.watcher.svc.cluster.local:5000"
+  GENERATOR_BOOTSTRAP_URL: "http://jcode-bootstrap-svc:5000"
+  GENERATOR_WORKSPACE_URL: "http://jcode-generator-svc:5000"
   GENERATOR_AUTH_ISSUER: "jcode-backend"
   GENERATOR_AUTH_AUDIENCE: "jcode-generator"
   GENERATOR_AUTH_SUBJECT: "jcode-backend"
+  WORKSPACE_LIFECYCLE_MAX_ATTEMPTS: "10"
+  WORKSPACE_LIFECYCLE_LOCK_TIMEOUT_SECONDS: "300"
+  WORKSPACE_LIFECYCLE_RECONCILE_DELAY_MS: "3000"
+  WORKSPACE_LIFECYCLE_INITIAL_DELAY_MS: "10000"
+  WORKSPACE_LIFECYCLE_BATCH_SIZE: "20"
+  WORKSPACE_LIFECYCLE_REQUEST_TIMEOUT_SECONDS: "90"
+  ASSIGNMENT_SCHEDULE_REFRESH_MS: "30000"
 
   # Keycloak OAuth2
   SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_KEYCLOAK_CLIENTID: "myclient"

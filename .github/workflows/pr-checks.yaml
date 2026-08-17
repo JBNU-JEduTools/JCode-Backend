@@ -19,4 +19,19 @@ jobs:
           cache: gradle
       - uses: gradle/actions/setup-gradle@v4
       - run: ./gradlew test --no-daemon
+      - name: Validate Kubernetes DNS settings
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
 
+          deployment = Path("k8s/jcode-backend.yaml").read_text(encoding="utf-8")
+          config = Path("k8s/jcode-val-ex.yaml").read_text(encoding="utf-8")
+          example = Path("src/main/resources/application-example.properties").read_text(encoding="utf-8")
+          assert 'name: ndots\n          value: "2"' in deployment
+          for service in ("jcode-bootstrap-svc", "jcode-generator-svc"):
+              url = f"http://{service}:5000"
+              assert url in config
+              assert url in example
+              assert f"{service}.watcher.svc.cluster.local" not in config
+              assert f"{service}.watcher.svc.cluster.local" not in example
+          PY

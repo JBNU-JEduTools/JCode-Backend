@@ -31,6 +31,13 @@ data class JCodeRequestDto(
     val student_num: String,
 
     val use_vnc: Boolean,
+    val environment_profile: String,
+    val use_jupyter: Boolean,
+    val base_image: String? = null,
+    val resource_profile: String,
+    val egress_policy: String,
+    val workspace_scope: String,
+    val assignment_workspace_key: String? = null,
     val use_snapshot: Boolean,
     val hw_count: Int = 10,
     val prac_count: Int = 0,

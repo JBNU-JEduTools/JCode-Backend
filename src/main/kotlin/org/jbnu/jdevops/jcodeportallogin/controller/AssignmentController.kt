@@ -3,6 +3,7 @@ package org.jbnu.jdevops.jcodeportallogin.controller
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.tags.Tag
 import org.jbnu.jdevops.jcodeportallogin.dto.assignment.AssignmentDto
+import org.jbnu.jdevops.jcodeportallogin.entity.StarterOverwritePolicy
 import org.jbnu.jdevops.jcodeportallogin.service.AssignmentService
 import org.springframework.http.ResponseEntity
 import org.springframework.security.access.prepost.PreAuthorize
@@ -44,11 +45,16 @@ class AssignmentController(
     // 과제 삭제
     @Operation(summary = "과제 삭제", description = "특정 강의의 특정 과제를 삭제합니다.")
     @DeleteMapping("/{assignmentId}")
-    fun deleteAssignment(@PathVariable courseId: Long, @PathVariable assignmentId: Long, authentication: Authentication): ResponseEntity<String> {
+    fun deleteAssignment(
+        @PathVariable courseId: Long,
+        @PathVariable assignmentId: Long,
+        @RequestParam(defaultValue = "90") retentionDays: Int,
+        authentication: Authentication
+    ): ResponseEntity<String> {
         val email = authentication.principal as? String
             ?: throw IllegalStateException("인증 정보를 찾을 수 없습니다.")
-        assignmentService.deleteAssignment(courseId, assignmentId, email)
-        return ResponseEntity.ok("Assignment deleted successfully")
+        assignmentService.deleteAssignment(courseId, assignmentId, email, retentionDays)
+        return ResponseEntity.accepted().body("Assignment archive requested")
     }
 
     // 스타터 코드 업로드
@@ -58,13 +64,45 @@ class AssignmentController(
         @PathVariable courseId: Long,
         @PathVariable assignmentId: Long,
         @RequestParam("file") file: MultipartFile,
+        @RequestParam(defaultValue = "PRESERVE_EXISTING") overwritePolicy: StarterOverwritePolicy,
+        @RequestParam(defaultValue = "true") deployNow: Boolean,
         @RequestHeader("Authorization") authorization: String,
         authentication: Authentication
     ): ResponseEntity<Map<String, String>> {
         val email = authentication.principal as? String
             ?: throw IllegalStateException("인증 정보를 찾을 수 없습니다.")
         val token = authorization.removePrefix("Bearer").trim()
-        assignmentService.uploadStarterCode(courseId, assignmentId, file, email, token)
-        return ResponseEntity.ok(mapOf("msg" to "스타터 코드가 업로드되었습니다."))
+        val assignment = assignmentService.uploadStarterCode(
+            courseId, assignmentId, file, overwritePolicy, deployNow, email, token
+        )
+        return ResponseEntity.accepted().body(
+            mapOf("msg" to "스타터 코드 원본을 저장했습니다.", "version" to assignment.starterVersion.toString())
+        )
+    }
+
+    data class ReopenAssignmentRequest(val deadlineDate: java.time.LocalDateTime)
+
+    @PostMapping("/{assignmentId}/reopen")
+    fun reopenAssignment(
+        @PathVariable courseId: Long,
+        @PathVariable assignmentId: Long,
+        @RequestBody request: ReopenAssignmentRequest,
+        authentication: Authentication
+    ): ResponseEntity<AssignmentDto> {
+        val email = authentication.principal as? String
+            ?: throw IllegalStateException("인증 정보를 찾을 수 없습니다.")
+        return ResponseEntity.ok(assignmentService.reopenAssignment(courseId, assignmentId, request.deadlineDate, email))
+    }
+
+    @PostMapping("/{assignmentId}/retry")
+    fun retryAssignment(
+        @PathVariable courseId: Long,
+        @PathVariable assignmentId: Long,
+        authentication: Authentication
+    ): ResponseEntity<Map<String, String>> {
+        val email = authentication.principal as? String
+            ?: throw IllegalStateException("인증 정보를 찾을 수 없습니다.")
+        assignmentService.retryAssignment(courseId, assignmentId, email)
+        return ResponseEntity.accepted().body(mapOf("msg" to "과제 작업 재시도를 요청했습니다."))
     }
 }

@@ -8,5 +8,4 @@ interface AssignmentRepository : JpaRepository<Assignment, Long> {
     fun findByCourseId(courseId: Long): List<Assignment>
     fun findByIdAndCourseId(id: Long, courseId: Long): Optional<Assignment>
     fun existsByCourseIdAndName(courseId: Long, assignmentName: String): Boolean
-    fun existsByCourseIdAndDirName(courseId: Long, dirName: String): Boolean
 }

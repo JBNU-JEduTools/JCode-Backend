@@ -4,6 +4,22 @@ import jakarta.persistence.*
 import jakarta.validation.constraints.NotBlank
 import jakarta.validation.constraints.NotNull
 import java.time.LocalDateTime
+import java.util.UUID
+
+enum class AssignmentLifecycleStatus {
+    PROVISIONING,
+    ACTIVE,
+    PROVISION_FAILED,
+    DELETING,
+    ARCHIVED
+}
+
+enum class AssignmentScheduleStatus {
+    SCHEDULED,
+    OPEN,
+    CLOSED,
+    ARCHIVED
+}
 
 @Entity
 @Table(name = "assignment")
@@ -23,10 +39,36 @@ data class Assignment(
     val description: String?,
 
     @Column(name = "dir_name", nullable = false)
-    val dirName: String = "",
+    var dirName: String = "pending-${UUID.randomUUID()}",
+
+    @Column(name = "workspace_key", nullable = false, unique = true, length = 80)
+    var workspaceKey: String = dirName,
+
+    @Column(name = "legacy_dir_name", length = 100)
+    var legacyDirName: String? = null,
 
     @Column(name = "has_starter_code", nullable = false)
-    val hasStarterCode: Boolean = false,
+    var hasStarterCode: Boolean = false,
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "lifecycle_status", nullable = false, length = 24)
+    var lifecycleStatus: AssignmentLifecycleStatus = AssignmentLifecycleStatus.PROVISIONING,
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "schedule_status", nullable = false, length = 24)
+    var scheduleStatus: AssignmentScheduleStatus = AssignmentScheduleStatus.SCHEDULED,
+
+    @Column(name = "last_error", columnDefinition = "TEXT")
+    var lastError: String? = null,
+
+    @Column(name = "archive_retention_days", nullable = false)
+    var archiveRetentionDays: Int = 90,
+
+    @Column(name = "archived_at")
+    var archivedAt: LocalDateTime? = null,
+
+    @Column(name = "finalized_at")
+    var finalizedAt: LocalDateTime? = null,
 
     @Column
     @field:NotNull(message = "{kickoff.date.required}")

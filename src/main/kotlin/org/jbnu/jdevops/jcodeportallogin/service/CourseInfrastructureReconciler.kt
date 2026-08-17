@@ -59,7 +59,17 @@ class CourseInfrastructureReconciler(
                 .attribute(GENERATOR_SCOPE_ATTRIBUTE, "namespace:write")
                 .header("Idempotency-Key", operation.idempotencyKey)
                 .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue(mapOf("course_id" to course.id, "namespace" to namespace, "use_vnc" to course.vnc))
+                .bodyValue(mapOf(
+                    "course_id" to course.id,
+                    "namespace" to namespace,
+                    "environment_profile" to course.environmentProfile.name,
+                    "use_vnc" to course.useVnc,
+                    "use_jupyter" to course.useJupyter,
+                    "base_image" to course.baseImage,
+                    "resource_profile" to course.resourceProfile.name,
+                    "egress_policy" to course.egressPolicy.name,
+                    "workspace_scope" to course.workspaceScope.name
+                ))
                 .retrieve()
                 .bodyToMono(Map::class.java)
                 .timeout(Duration.ofSeconds(requestTimeoutSeconds))

@@ -1,22 +1,20 @@
 package org.jbnu.jdevops.jcodeportallogin.service
 
-import org.jbnu.jdevops.jcodeportallogin.dto.assignment.AssignmentDto
-import org.jbnu.jdevops.jcodeportallogin.entity.Assignment
-import org.jbnu.jdevops.jcodeportallogin.entity.Course
-import org.jbnu.jdevops.jcodeportallogin.entity.CourseStatus
-import org.jbnu.jdevops.jcodeportallogin.entity.RoleType
-import org.jbnu.jdevops.jcodeportallogin.repo.AssignmentRepository
-import org.jbnu.jdevops.jcodeportallogin.repo.CourseRepository
-import org.jbnu.jdevops.jcodeportallogin.repo.UserRepository
-import org.jbnu.jdevops.jcodeportallogin.repo.UserCoursesRepository
-import org.springframework.beans.factory.annotation.Qualifier
 import org.jbnu.jdevops.jcodeportallogin.config.GENERATOR_SCOPE_ATTRIBUTE
+import org.jbnu.jdevops.jcodeportallogin.dto.assignment.AssignmentDto
+import org.jbnu.jdevops.jcodeportallogin.entity.*
+import org.jbnu.jdevops.jcodeportallogin.repo.*
+import org.springframework.beans.factory.annotation.Qualifier
+import org.springframework.core.io.ByteArrayResource
+import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
+import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Transactional
+import org.springframework.util.LinkedMultiValueMap
+import org.springframework.web.multipart.MultipartFile
 import org.springframework.web.reactive.function.client.WebClient
 import org.springframework.web.server.ResponseStatusException
-import org.springframework.http.HttpStatus
-import org.springframework.transaction.annotation.Transactional
 import java.time.LocalDateTime
 
 @Service
@@ -25,21 +23,17 @@ class AssignmentService(
     private val courseRepository: CourseRepository,
     private val userRepository: UserRepository,
     private val userCoursesRepository: UserCoursesRepository,
-    @Qualifier("generatorWorkspaceWebClient")
-    private val generatorWebClient: WebClient
+    private val starterArtifactRepository: StarterArtifactRepository,
+    private val jCodeRepository: JCodeRepository,
+    private val workspaceOperationStore: WorkspaceOperationStore,
+    @Qualifier("generatorWorkspaceWebClient") private val generatorWebClient: WebClient
 ) {
-
     private fun validateAssignmentAuthority(courseId: Long, email: String) {
         val user = userRepository.findByEmail(email)
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "User not found")
-
-        if (user.role == RoleType.ADMIN) {
-            return
-        }
-
+        if (user.role == RoleType.ADMIN) return
         val membership = userCoursesRepository.findByUserIdAndCourseId(user.id, courseId)
             ?: throw ResponseStatusException(HttpStatus.FORBIDDEN, "해당 강의에 소속되어 있지 않습니다.")
-
         if (membership.role !in setOf(RoleType.PROFESSOR, RoleType.ASSISTANT)) {
             throw ResponseStatusException(HttpStatus.FORBIDDEN, "해당 강의의 과제 관리 권한이 없습니다.")
         }
@@ -54,151 +48,279 @@ class AssignmentService(
         return course
     }
 
-    private fun getAssignmentInCourse(courseId: Long, assignmentId: Long): Assignment =
+    private fun getAssignment(courseId: Long, assignmentId: Long): Assignment =
         assignmentRepository.findByIdAndCourseId(assignmentId, courseId)
             .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "Assignment not found in course") }
 
-    private fun toDirName(name: String): String {
-        return name.trim()
-            .replace(Regex("[/\\\\:*?\"<>|]"), "")
-            .take(80)
+    private fun validateDates(kickoff: LocalDateTime, deadline: LocalDateTime) {
+        if (!deadline.isAfter(kickoff)) {
+            throw ResponseStatusException(HttpStatus.BAD_REQUEST, "마감 시각은 시작 시각보다 뒤여야 합니다.")
+        }
     }
 
-    private fun provisionAssignmentDirectory(courseId: Long, courseCode: String, clss: Int, dirName: String) {
-        generatorWebClient.post()
-            .uri("/api/workspace/provision")
-            .attribute(GENERATOR_SCOPE_ATTRIBUTE, "workspace:write")
-            .contentType(MediaType.APPLICATION_JSON)
-            .bodyValue(mapOf(
-                "course_id" to courseId,
-                "namespace" to "jcode-${courseCode.lowercase()}-$clss",
-                "dir_name" to dirName
-            ))
-            .retrieve()
-            .bodyToMono(Map::class.java)
-            .block()
+    private fun scheduleStatus(kickoff: LocalDateTime, deadline: LocalDateTime): AssignmentScheduleStatus {
+        val now = LocalDateTime.now()
+        return when {
+            now.isBefore(kickoff) -> AssignmentScheduleStatus.SCHEDULED
+            now.isAfter(deadline) -> AssignmentScheduleStatus.CLOSED
+            else -> AssignmentScheduleStatus.OPEN
+        }
     }
 
-    // 과제 추가
-    @Transactional
-    fun createAssignment(courseId: Long, assignmentDto: AssignmentDto, email: String, token: String): AssignmentDto {
-        validateAssignmentAuthority(courseId, email)
-
-        val course = getActiveCourse(courseId)
-
-        if(assignmentRepository.existsByCourseIdAndName(course.id, assignmentDto.assignmentName)){
-            throw ResponseStatusException(HttpStatus.CONFLICT, "Assignment already exists")
+    private fun closeAssignmentJcodes(assignmentId: Long) {
+        jCodeRepository.findByAssignmentId(assignmentId).forEach { jcode ->
+            if (jcode.lifecycleStatus !in setOf(JcodeLifecycleStatus.DELETE_PENDING, JcodeLifecycleStatus.ARCHIVED)) {
+                jcode.lifecycleStatus = JcodeLifecycleStatus.DELETE_PENDING
+                jcode.lastError = null
+                jCodeRepository.save(jcode)
+                workspaceOperationStore.enqueue(
+                    WorkspaceOperationTarget.JCODE, jcode.id, WorkspaceOperationAction.DELETE_JCODE
+                )
+            }
         }
+    }
 
-        val dirName = toDirName(assignmentDto.assignmentName)
-        if (dirName.isBlank()) {
-            throw ResponseStatusException(HttpStatus.BAD_REQUEST, "유효한 과제명을 입력해주세요.")
-        }
-
-        if (assignmentRepository.existsByCourseIdAndDirName(course.id, dirName)) {
-            throw ResponseStatusException(HttpStatus.CONFLICT, "동일한 디렉토리명의 과제가 이미 존재합니다.")
-        }
-
-        val assignment = assignmentRepository.save(Assignment(
-            name = assignmentDto.assignmentName,
-            description = assignmentDto.assignmentDescription,
-            dirName = dirName,
-            kickoffDate = assignmentDto.kickoffDate,
-            deadlineDate = assignmentDto.deadlineDate,
-            course = course))
-
-        provisionAssignmentDirectory(course.id, course.code, course.clss, dirName)
-
+    fun toDto(assignment: Assignment): AssignmentDto {
+        val starter = starterArtifactRepository.findTopByAssignmentIdAndStatusOrderByVersionDesc(
+            assignment.id, StarterArtifactStatus.READY
+        )
         return AssignmentDto(
             assignmentId = assignment.id,
             assignmentName = assignment.name,
             assignmentDescription = assignment.description,
-            dirName = assignment.dirName,
+            dirName = assignment.workspaceKey,
+            workspaceKey = assignment.workspaceKey,
             hasStarterCode = assignment.hasStarterCode,
+            lifecycleStatus = assignment.lifecycleStatus,
+            scheduleStatus = assignment.scheduleStatus,
+            lastError = assignment.lastError,
+            starterVersion = starter?.version,
+            starterChecksum = starter?.checksum,
+            starterOverwritePolicy = starter?.overwritePolicy,
+            archiveRetentionDays = assignment.archiveRetentionDays,
+            archivedAt = assignment.archivedAt?.toString(),
+            finalizedAt = assignment.finalizedAt?.toString(),
             kickoffDate = assignment.kickoffDate,
             deadlineDate = assignment.deadlineDate,
             createdAt = assignment.createdAt.toString(),
-            updatedAt = assignment.updatedAt.toString())
+            updatedAt = assignment.updatedAt.toString()
+        )
     }
 
-    // 과제 수정 (업데이트)
     @Transactional
-    fun updateAssignment(courseId: Long, assignmentId: Long, assignmentDto: AssignmentDto, email: String): AssignmentDto {
+    fun createAssignment(courseId: Long, dto: AssignmentDto, email: String, token: String): AssignmentDto {
         validateAssignmentAuthority(courseId, email)
+        val course = getActiveCourse(courseId)
+        validateDates(dto.kickoffDate, dto.deadlineDate)
+        if (!dto.deadlineDate.isAfter(LocalDateTime.now())) {
+            throw ResponseStatusException(HttpStatus.BAD_REQUEST, "새 과제의 마감 시각은 현재보다 뒤여야 합니다.")
+        }
+        if (assignmentRepository.existsByCourseIdAndName(course.id, dto.assignmentName)) {
+            throw ResponseStatusException(HttpStatus.CONFLICT, "Assignment already exists")
+        }
+        val assignment = assignmentRepository.saveAndFlush(
+            Assignment(
+                name = dto.assignmentName.trim(),
+                description = dto.assignmentDescription,
+                kickoffDate = dto.kickoffDate,
+                deadlineDate = dto.deadlineDate,
+                scheduleStatus = scheduleStatus(dto.kickoffDate, dto.deadlineDate),
+                archiveRetentionDays = dto.archiveRetentionDays.coerceIn(1, 3650),
+                course = course
+            )
+        )
+        assignment.workspaceKey = "assignment-${assignment.id}"
+        assignment.dirName = assignment.workspaceKey
+        assignmentRepository.save(assignment)
+        workspaceOperationStore.enqueue(
+            WorkspaceOperationTarget.ASSIGNMENT, assignment.id, WorkspaceOperationAction.PROVISION_ASSIGNMENT
+        )
+        return toDto(assignment)
+    }
 
+    @Transactional
+    fun updateAssignment(courseId: Long, assignmentId: Long, dto: AssignmentDto, email: String): AssignmentDto {
+        validateAssignmentAuthority(courseId, email)
         getActiveCourse(courseId)
-        val assignment = getAssignmentInCourse(courseId, assignmentId)
-
-        // dirName은 변경하지 않음 (디렉토리명 불변)
-        val updatedAssignment = assignment.copy(
-            name = assignmentDto.assignmentName,
-            description = assignmentDto.assignmentDescription,
-            kickoffDate = assignmentDto.kickoffDate,
-            deadlineDate = assignmentDto.deadlineDate,
+        val assignment = getAssignment(courseId, assignmentId)
+        if (assignment.lifecycleStatus in setOf(AssignmentLifecycleStatus.DELETING, AssignmentLifecycleStatus.ARCHIVED)) {
+            throw ResponseStatusException(HttpStatus.CONFLICT, "삭제 중이거나 보관된 과제는 수정할 수 없습니다.")
+        }
+        validateDates(dto.kickoffDate, dto.deadlineDate)
+        val requestedSchedule = scheduleStatus(dto.kickoffDate, dto.deadlineDate)
+        if (assignment.scheduleStatus == AssignmentScheduleStatus.CLOSED && requestedSchedule != AssignmentScheduleStatus.CLOSED) {
+            throw ResponseStatusException(HttpStatus.CONFLICT, "마감된 과제는 다시 열기 기능으로 연장해야 합니다.")
+        }
+        val updated = assignment.copy(
+            name = dto.assignmentName.trim(),
+            description = dto.assignmentDescription,
+            kickoffDate = dto.kickoffDate,
+            deadlineDate = dto.deadlineDate,
+            scheduleStatus = requestedSchedule,
+            archiveRetentionDays = dto.archiveRetentionDays.coerceIn(1, 3650),
             updatedAt = LocalDateTime.now()
         )
+        val saved = assignmentRepository.save(updated)
+        if (assignment.scheduleStatus != AssignmentScheduleStatus.CLOSED && requestedSchedule == AssignmentScheduleStatus.CLOSED) {
+            closeAssignmentJcodes(saved.id)
+            workspaceOperationStore.enqueue(
+                WorkspaceOperationTarget.ASSIGNMENT, saved.id, WorkspaceOperationAction.ARCHIVE_FINAL_SUBMISSION
+            )
+        }
+        return toDto(saved)
+    }
 
-        assignmentRepository.save(updatedAssignment)
+    fun uploadStarterCode(
+        courseId: Long,
+        assignmentId: Long,
+        file: MultipartFile,
+        overwritePolicy: StarterOverwritePolicy,
+        deployNow: Boolean,
+        email: String,
+        token: String
+    ): AssignmentDto {
+        validateAssignmentAuthority(courseId, email)
+        val course = getActiveCourse(courseId)
+        val assignment = getAssignment(courseId, assignmentId)
+        if (assignment.lifecycleStatus != AssignmentLifecycleStatus.ACTIVE) {
+            throw ResponseStatusException(HttpStatus.CONFLICT, "ACTIVE 상태의 과제에만 스타터 코드를 올릴 수 있습니다.")
+        }
+        if (assignment.scheduleStatus in setOf(AssignmentScheduleStatus.CLOSED, AssignmentScheduleStatus.ARCHIVED)) {
+            throw ResponseStatusException(HttpStatus.CONFLICT, "마감되거나 보관된 과제에는 스타터 코드를 배포할 수 없습니다.")
+        }
+        val version = (starterArtifactRepository.findTopByAssignmentIdOrderByVersionDesc(assignment.id)?.version ?: 0) + 1
+        val artifact = starterArtifactRepository.save(
+            StarterArtifact(
+                assignment = assignment,
+                version = version,
+                artifactKey = "assignments/${assignment.id}/starter/v$version.zip",
+                overwritePolicy = overwritePolicy
+            )
+        )
+        try {
+            val result = generatorWebClient.post()
+                .uri("/api/workspace/assignments/starter/upload")
+                .attribute(GENERATOR_SCOPE_ATTRIBUTE, "workspace:write")
+                .contentType(MediaType.MULTIPART_FORM_DATA)
+                .bodyValue(LinkedMultiValueMap<String, Any>().apply {
+                    add("course_id", course.id)
+                    add("namespace", "jcode-${course.code.lowercase()}-${course.clss}")
+                    add("assignment_id", assignment.id)
+                    add("version", version)
+                    add("artifact_key", artifact.artifactKey)
+                    add("file", object : ByteArrayResource(file.bytes) {
+                        override fun getFilename(): String = file.originalFilename ?: "starter.zip"
+                    })
+                })
+                .retrieve()
+                .bodyToMono(Map::class.java)
+                .block() ?: throw IllegalStateException("Generator 응답이 없습니다.")
+            artifact.checksum = result["checksum"] as? String
+                ?: throw IllegalStateException("Generator가 checksum을 반환하지 않았습니다.")
+            artifact.sizeBytes = (result["size_bytes"] as? Number)?.toLong() ?: file.size
+            artifact.status = StarterArtifactStatus.READY
+            starterArtifactRepository.save(artifact)
+            assignment.hasStarterCode = true
+            assignmentRepository.save(assignment)
+        } catch (error: Exception) {
+            artifact.status = StarterArtifactStatus.FAILED
+            artifact.lastError = (error.message ?: error.javaClass.simpleName).take(4000)
+            starterArtifactRepository.save(artifact)
+            throw ResponseStatusException(HttpStatus.BAD_GATEWAY, "스타터 코드 원본 저장에 실패했습니다: ${error.message}")
+        }
+        if (deployNow) {
+            workspaceOperationStore.enqueue(
+                WorkspaceOperationTarget.ASSIGNMENT,
+                assignment.id,
+                WorkspaceOperationAction.DISTRIBUTE_STARTER,
+                artifact.id
+            )
+        }
+        return toDto(assignment)
+    }
 
-        return AssignmentDto(
-            assignmentId = assignment.id,
-            assignmentName = updatedAssignment.name,
-            assignmentDescription = updatedAssignment.description,
-            dirName = updatedAssignment.dirName,
-            hasStarterCode = updatedAssignment.hasStarterCode,
-            kickoffDate = updatedAssignment.kickoffDate,
-            deadlineDate = updatedAssignment.deadlineDate,
-            createdAt = updatedAssignment.createdAt.toString(),
-            updatedAt = updatedAssignment.updatedAt.toString()
+    @Transactional
+    fun deleteAssignment(courseId: Long, assignmentId: Long, email: String, retentionDays: Int = 90) {
+        validateAssignmentAuthority(courseId, email)
+        getActiveCourse(courseId)
+        val assignment = getAssignment(courseId, assignmentId)
+        if (assignment.lifecycleStatus == AssignmentLifecycleStatus.ARCHIVED) return
+        if (assignment.lifecycleStatus == AssignmentLifecycleStatus.DELETING) return
+        assignment.lifecycleStatus = AssignmentLifecycleStatus.DELETING
+        assignment.archiveRetentionDays = retentionDays.coerceIn(1, 3650)
+        assignment.lastError = null
+        assignmentRepository.save(assignment)
+        closeAssignmentJcodes(assignment.id)
+        workspaceOperationStore.enqueue(
+            WorkspaceOperationTarget.ASSIGNMENT, assignment.id, WorkspaceOperationAction.ARCHIVE_ASSIGNMENT
         )
     }
 
-    // 스타터 코드 업로드
     @Transactional
-    fun uploadStarterCode(courseId: Long, assignmentId: Long, file: org.springframework.web.multipart.MultipartFile, email: String, token: String) {
-        validateAssignmentAuthority(courseId, email)
-
-        val course = getActiveCourse(courseId)
-        val assignment = getAssignmentInCourse(courseId, assignmentId)
-
-        // Generator에 스타터 코드 배포 요청
-        val result = try {
-            generatorWebClient.post()
-                .uri("/api/workspace/starter-code")
-                .attribute(GENERATOR_SCOPE_ATTRIBUTE, "workspace:write")
-                .contentType(org.springframework.http.MediaType.MULTIPART_FORM_DATA)
-                .bodyValue(
-                    org.springframework.util.LinkedMultiValueMap<String, Any>().apply {
-                        add("course_id", course.id)
-                        add("namespace", "jcode-${course.code.lowercase()}-${course.clss}")
-                        add("dir_name", assignment.dirName)
-                        add("file", object : org.springframework.core.io.ByteArrayResource(file.bytes) {
-                            override fun getFilename(): String = file.originalFilename ?: "starter.zip"
-                        })
-                    }
-                )
-                .retrieve()
-                .bodyToMono(Map::class.java)
-                .block()
-        } catch (ex: Exception) {
-            throw ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "스타터 코드 배포 실패: ${ex.message}")
-        }
-
-        val deployed = (result?.get("deployed") as? Number)?.toInt() ?: 0
-        if (deployed == 0) {
-            throw ResponseStatusException(HttpStatus.CONFLICT, "스타터 코드를 배포할 학생 워크스페이스가 없습니다.")
-        }
-
-        // hasStarterCode 플래그 업데이트
-        assignmentRepository.save(assignment.copy(hasStarterCode = true, updatedAt = LocalDateTime.now()))
-    }
-
-    // 과제 삭제
-    @Transactional
-    fun deleteAssignment(courseId: Long, assignmentId: Long, email: String) {
+    fun reopenAssignment(courseId: Long, assignmentId: Long, newDeadline: LocalDateTime, email: String): AssignmentDto {
         validateAssignmentAuthority(courseId, email)
         getActiveCourse(courseId)
-        val assignment = getAssignmentInCourse(courseId, assignmentId)
-        assignmentRepository.delete(assignment)
+        val assignment = getAssignment(courseId, assignmentId)
+        if (assignment.lifecycleStatus != AssignmentLifecycleStatus.ACTIVE) {
+            throw ResponseStatusException(HttpStatus.CONFLICT, "ACTIVE 상태의 과제만 다시 열 수 있습니다.")
+        }
+        if (!newDeadline.isAfter(LocalDateTime.now())) {
+            throw ResponseStatusException(HttpStatus.BAD_REQUEST, "새 마감 시각은 현재보다 뒤여야 합니다.")
+        }
+        if (assignment.scheduleStatus != AssignmentScheduleStatus.CLOSED || assignment.finalizedAt == null) {
+            throw ResponseStatusException(HttpStatus.CONFLICT, "최종 작업물 보관이 완료된 과제만 다시 열 수 있습니다.")
+        }
+        if (assignment.finalizedAt!!.plusDays(assignment.archiveRetentionDays.toLong()).isBefore(LocalDateTime.now())) {
+            throw ResponseStatusException(HttpStatus.GONE, "최종 작업물 보관 기간이 지나 과제를 다시 열 수 없습니다.")
+        }
+        val updated = assignment.copy(
+            deadlineDate = newDeadline,
+            scheduleStatus = AssignmentScheduleStatus.OPEN,
+            lifecycleStatus = AssignmentLifecycleStatus.PROVISIONING,
+            updatedAt = LocalDateTime.now()
+        )
+        val saved = assignmentRepository.save(updated)
+        workspaceOperationStore.enqueue(
+            WorkspaceOperationTarget.ASSIGNMENT, saved.id, WorkspaceOperationAction.RESTORE_ASSIGNMENT
+        )
+        return toDto(saved)
+    }
+
+    fun retryAssignment(courseId: Long, assignmentId: Long, email: String) {
+        validateAssignmentAuthority(courseId, email)
+        val assignment = getAssignment(courseId, assignmentId)
+        if (assignment.lifecycleStatus != AssignmentLifecycleStatus.PROVISION_FAILED && assignment.lastError.isNullOrBlank()) {
+            throw ResponseStatusException(HttpStatus.CONFLICT, "현재 과제에 실패한 작업이 없습니다.")
+        }
+        if (!workspaceOperationStore.retry(WorkspaceOperationTarget.ASSIGNMENT, assignmentId)) {
+            throw ResponseStatusException(HttpStatus.CONFLICT, "재시도할 실패 작업이 없습니다.")
+        }
+    }
+
+    @Scheduled(fixedDelayString = "\${assignment.schedule.refresh-ms:30000}")
+    @Transactional
+    fun refreshScheduleStatuses() {
+        val now = LocalDateTime.now()
+        assignmentRepository.findAll().forEach { assignment ->
+            if (assignment.lifecycleStatus in setOf(AssignmentLifecycleStatus.DELETING, AssignmentLifecycleStatus.ARCHIVED)) return@forEach
+            val expected = when {
+                now.isBefore(assignment.kickoffDate) -> AssignmentScheduleStatus.SCHEDULED
+                now.isAfter(assignment.deadlineDate) -> AssignmentScheduleStatus.CLOSED
+                else -> AssignmentScheduleStatus.OPEN
+            }
+            if (assignment.scheduleStatus != expected) {
+                assignment.scheduleStatus = expected
+                assignment.updatedAt = now
+                assignmentRepository.save(assignment)
+                if (expected == AssignmentScheduleStatus.CLOSED) {
+                    closeAssignmentJcodes(assignment.id)
+                    workspaceOperationStore.enqueue(
+                        WorkspaceOperationTarget.ASSIGNMENT,
+                        assignment.id,
+                        WorkspaceOperationAction.ARCHIVE_FINAL_SUBMISSION
+                    )
+                }
+            }
+        }
     }
 }

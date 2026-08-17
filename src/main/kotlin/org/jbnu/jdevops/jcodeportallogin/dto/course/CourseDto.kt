@@ -3,6 +3,10 @@ package org.jbnu.jdevops.jcodeportallogin.dto.course
 import jakarta.validation.constraints.NotBlank
 import jakarta.validation.constraints.Size
 import org.jbnu.jdevops.jcodeportallogin.entity.CourseStatus
+import org.jbnu.jdevops.jcodeportallogin.entity.CourseEnvironmentProfile
+import org.jbnu.jdevops.jcodeportallogin.entity.WorkspaceEgressPolicy
+import org.jbnu.jdevops.jcodeportallogin.entity.WorkspaceResourceProfile
+import org.jbnu.jdevops.jcodeportallogin.entity.WorkspaceScope
 
 data class CourseDto(
     val courseId: Long?,
@@ -22,7 +26,15 @@ data class CourseDto(
     val year: Int,
     val term: Int,
     val clss: Int,
-    val vnc: Boolean,
+    @Deprecated("environmentProfile과 useVnc를 사용하세요.")
+    val vnc: Boolean? = null,
+    val environmentProfile: CourseEnvironmentProfile? = null,
+    val useVnc: Boolean? = null,
+    val useJupyter: Boolean? = null,
+    val baseImage: String? = null,
+    val resourceProfile: WorkspaceResourceProfile? = null,
+    val egressPolicy: WorkspaceEgressPolicy? = null,
+    val workspaceScope: WorkspaceScope? = null,
     val hwCount: Int = 10,
     val pracEnabled: Boolean = false,
     val pracCount: Int = 0,

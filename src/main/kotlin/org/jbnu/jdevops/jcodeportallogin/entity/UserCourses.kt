@@ -4,6 +4,15 @@ import jakarta.persistence.*
 import jakarta.validation.constraints.NotNull
 import java.time.LocalDateTime
 
+enum class MembershipStatus {
+    PROVISIONING,
+    PROVISION_FAILED,
+    READY,
+    DELETE_PENDING,
+    DELETE_FAILED,
+    ARCHIVED
+}
+
 @Entity
 @Table(
     name = "user_courses",
@@ -29,6 +38,16 @@ data class UserCourses(
     @Column(nullable = false)
     @field:NotNull(message = "{userCourses.role.required}")
     var role: RoleType,
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "lifecycle_status", nullable = false, length = 24)
+    var lifecycleStatus: MembershipStatus = MembershipStatus.PROVISIONING,
+
+    @Column(name = "last_error", columnDefinition = "TEXT")
+    var lastError: String? = null,
+
+    @Column(name = "archived_at")
+    var archivedAt: LocalDateTime? = null,
 
     @OneToMany(mappedBy = "userCourse", cascade = [CascadeType.ALL], fetch = FetchType.LAZY, orphanRemoval = true)
     val jcodes: List<Jcode> = mutableListOf(),

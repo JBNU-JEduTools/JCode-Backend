@@ -79,22 +79,46 @@ class RedirectController(
             userCoursesRepository
         )
 
-        val storedJcode = jCodeRepository.findByUserIdAndCourseIdAndSnapshot(user.id, course.id, redirectRequest.snapshot)
+        val storedJcode = if (!redirectRequest.snapshot && course.workspaceScope == org.jbnu.jdevops.jcodeportallogin.entity.WorkspaceScope.ASSIGNMENT && redirectRequest.assignmentId != null) {
+            jCodeRepository.findFirstByUserIdAndCourseIdAndSnapshotAndAssignmentIdAndLifecycleStatusNotOrderByIdDesc(
+                user.id, course.id, redirectRequest.snapshot, redirectRequest.assignmentId,
+                org.jbnu.jdevops.jcodeportallogin.entity.JcodeLifecycleStatus.ARCHIVED
+            )
+        } else {
+            jCodeRepository.findFirstByUserIdAndCourseIdAndSnapshotAndAssignmentIsNullAndLifecycleStatusNotOrderByIdDesc(
+                user.id, course.id, redirectRequest.snapshot,
+                org.jbnu.jdevops.jcodeportallogin.entity.JcodeLifecycleStatus.ARCHIVED
+            )
+        }
             ?: throw ResponseStatusException(HttpStatus.CONFLICT, "활성 JCode가 없습니다.")
+        if (storedJcode.lifecycleStatus != org.jbnu.jdevops.jcodeportallogin.entity.JcodeLifecycleStatus.READY) {
+            throw ResponseStatusException(HttpStatus.CONFLICT, "JCode 준비가 아직 완료되지 않았습니다.")
+        }
+        val jcodeUrl = storedJcode.jcodeUrl
+            ?: throw ResponseStatusException(HttpStatus.CONFLICT, "JCode 주소가 아직 준비되지 않았습니다.")
 
         // 사용자 프로필 정보를 Redis에 저장하고 UUID를 획득 & UUID를 UTF-8로 URL 인코딩
         val uuid = redisService.storeUserProfile(user.email, user.studentNum.toString(), course.code, course.clss.toString(), redirectRequest.snapshot.toString())
         val encodedUUID = URLEncoder.encode(uuid, StandardCharsets.UTF_8.toString()).replace("+", "%2B")
 
         // 학생 Jcode 정보 Redis 동기화
-        if (redirectRequest.snapshot) redisService.storeSnapshotUserCourse(user.email, course.code, course.clss, storedJcode.jcodeUrl)
-        else redisService.storeUserCourse(user.email, course.code, course.clss, storedJcode.jcodeUrl)
+        if (redirectRequest.snapshot) redisService.storeSnapshotUserCourse(user.email, course.code, course.clss, jcodeUrl)
+        else redisService.storeUserCourse(user.email, course.code, course.clss, jcodeUrl)
 
         // 과제별 폴더 경로 결정
-        val folderPath = if (redirectRequest.assignmentId != null) {
+        val folderPath = if (!redirectRequest.snapshot && redirectRequest.assignmentId != null) {
             val assignment = assignmentRepository.findByIdAndCourseId(redirectRequest.assignmentId, course.id)
                 .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "Assignment not found in course") }
-            "/home/coder/project/${assignment.dirName}"
+            if (assignment.lifecycleStatus != org.jbnu.jdevops.jcodeportallogin.entity.AssignmentLifecycleStatus.ACTIVE ||
+                assignment.scheduleStatus != org.jbnu.jdevops.jcodeportallogin.entity.AssignmentScheduleStatus.OPEN
+            ) {
+                throw ResponseStatusException(HttpStatus.CONFLICT, "현재 열려 있는 과제만 IDE에 진입할 수 있습니다.")
+            }
+            if (course.workspaceScope == org.jbnu.jdevops.jcodeportallogin.entity.WorkspaceScope.ASSIGNMENT) {
+                "/home/coder/project"
+            } else {
+                "/home/coder/project/${assignment.workspaceKey}"
+            }
         } else {
             "/home/coder/project"
         }

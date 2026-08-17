@@ -28,7 +28,8 @@ class UserService(
     private val passwordEncoder: PasswordEncoder,
     private val courseRepository: CourseRepository,
     private val redisService: RedisService,
-    private val jCodeService: JCodeService
+    private val jCodeService: JCodeService,
+    private val workspaceOperationStore: WorkspaceOperationStore
 ) {
     @Transactional
     fun register(registerUserDto: RegisterUserDto): ResponseEntity<String> {
@@ -122,7 +123,9 @@ class UserService(
                 courseClss = it.course.clss,
                 courseTerm = it.course.term,
                 courseYear = it.course.year,
-                status = it.course.status
+                status = it.course.status,
+                membershipStatus = it.lifecycleStatus,
+                membershipError = it.lastError
             )
         }
     }
@@ -145,7 +148,9 @@ class UserService(
                 courseClss = it.course.clss,
                 courseTerm = it.course.term,
                 courseYear = it.course.year,
-                status = it.course.status
+                status = it.course.status,
+                membershipStatus = it.lifecycleStatus,
+                membershipError = it.lastError
             )
         }
     }
@@ -159,7 +164,11 @@ class UserService(
         return jcodeRepository.findByUserId(user.id).map {
             JCodeDto(
                 jcodeId = it.id,
-                courseName = it.course.name
+                courseName = it.course.name,
+                status = it.lifecycleStatus,
+                jcodeUrl = it.jcodeUrl,
+                assignmentId = it.assignment?.id,
+                lastError = it.lastError
             )
         }
     }
@@ -172,7 +181,9 @@ class UserService(
 
         return userCoursesRepository.findByUserId(user.id).map {
             val assignments = assignmentRepository.findByCourseId(it.course.id)
-            val jcode = jcodeRepository.findByUserIdAndCourseIdAndSnapshot(user.id, it.course.id, false)
+            val jcode = jcodeRepository.findFirstByUserIdAndCourseIdAndSnapshotAndAssignmentIsNullAndLifecycleStatusNotOrderByIdDesc(
+                user.id, it.course.id, false, JcodeLifecycleStatus.ARCHIVED
+            )
 
             UserCourseDetailsDto(
                 courseId = it.course.id,
@@ -186,14 +197,25 @@ class UserService(
                 pracEnabled = it.course.pracEnabled,
                 pracCount = it.course.pracCount,
                 status = it.course.status,
+                environmentProfile = it.course.environmentProfile,
+                workspaceScope = it.course.workspaceScope,
                 courseRole = it.role,
+                membershipStatus = it.lifecycleStatus,
+                membershipError = it.lastError,
                 assignments = assignments.map { assignment ->
                     AssignmentDto(
                         assignmentId = assignment.id,
                         assignmentName = assignment.name,
                         assignmentDescription = assignment.description,
-                        dirName = assignment.dirName,
+                        dirName = assignment.workspaceKey,
+                        workspaceKey = assignment.workspaceKey,
                         hasStarterCode = assignment.hasStarterCode,
+                        lifecycleStatus = assignment.lifecycleStatus,
+                        scheduleStatus = assignment.scheduleStatus,
+                        lastError = assignment.lastError,
+                        archiveRetentionDays = assignment.archiveRetentionDays,
+                        archivedAt = assignment.archivedAt?.toString(),
+                        finalizedAt = assignment.finalizedAt?.toString(),
                         kickoffDate = assignment.kickoffDate,
                         deadlineDate = assignment.deadlineDate,
                         createdAt = assignment.createdAt.toString(),
@@ -234,9 +256,30 @@ class UserService(
         val user = userRepository.findByEmail(email)
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "User not found")
 
-        // 중복 가입 방지
-        if (userCoursesRepository.existsByUserIdAndCourseId(user.id, course.id)) {
-            throw ResponseStatusException(HttpStatus.CONFLICT, "User already enrolled in this course")
+        val existingMembership = userCoursesRepository.findByUserIdAndCourseId(user.id, course.id)
+        if (existingMembership != null) {
+            if (existingMembership.lifecycleStatus != MembershipStatus.ARCHIVED) {
+                throw ResponseStatusException(HttpStatus.CONFLICT, "User already enrolled in this course")
+            }
+            existingMembership.role = user.role
+            existingMembership.lifecycleStatus = if (user.role == RoleType.STUDENT) {
+                MembershipStatus.PROVISIONING
+            } else {
+                MembershipStatus.READY
+            }
+            existingMembership.archivedAt = null
+            existingMembership.lastError = null
+            userCoursesRepository.save(existingMembership)
+            if (user.role == RoleType.STUDENT) {
+                workspaceOperationStore.enqueue(
+                    WorkspaceOperationTarget.MEMBERSHIP,
+                    existingMembership.id,
+                    WorkspaceOperationAction.PROVISION_MEMBERSHIP
+                )
+            } else if (user.role == RoleType.PROFESSOR) {
+                redisService.addUserToCourseManagerList(course.code, course.clss, email)
+            }
+            return course.id
         }
 
         // 가입 시 전역 role 사용 (ASSISTANT 전역 role 제거됨 — 수업별로만 관리)
@@ -246,12 +289,20 @@ class UserService(
         val userCourse = UserCourses(
             user = user,
             course = course,
-            role = role
+            role = role,
+            lifecycleStatus = if (role == RoleType.STUDENT) MembershipStatus.PROVISIONING else MembershipStatus.READY
         )
         try { // 여러 요청이 동시에 들어와 db unique 제약조건을 위반했을 시 처리
-            userCoursesRepository.save(userCourse)
+            userCoursesRepository.saveAndFlush(userCourse)
         } catch (ex: DataIntegrityViolationException) {
             throw ResponseStatusException(HttpStatus.CONFLICT, "User already enrolled in this course")
+        }
+        if (role == RoleType.STUDENT) {
+            workspaceOperationStore.enqueue(
+                WorkspaceOperationTarget.MEMBERSHIP,
+                userCourse.id,
+                WorkspaceOperationAction.PROVISION_MEMBERSHIP
+            )
         }
         
         // 교수는 강의 관리자에 추가
@@ -279,18 +330,39 @@ class UserService(
         val userCourse = userCoursesRepository.findByUserIdAndCourseId(user.id, course.id)
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "User is not enrolled in this course")
 
-        // Kubernetes Deployment/Service를 먼저 회수한 뒤 DB 접근권한을 제거한다.
-        jCodeService.deleteAllJCodesForUserCourse(userCourse, token)
+        if (userCourse.lifecycleStatus in setOf(MembershipStatus.DELETE_PENDING, MembershipStatus.ARCHIVED)) return course.id
+        userCourse.lifecycleStatus = MembershipStatus.DELETE_PENDING
+        userCourse.lastError = null
+        userCoursesRepository.save(userCourse)
+        jcodeRepository.findAllByUserCourse(userCourse).forEach { jcode ->
+            if (jcode.lifecycleStatus != JcodeLifecycleStatus.ARCHIVED) {
+                jcode.lifecycleStatus = JcodeLifecycleStatus.DELETE_PENDING
+                jcode.lastError = null
+                jcodeRepository.save(jcode)
+            }
+        }
         redisService.deleteUserCourseAccess(email, course.code, course.clss)
-
-        // UserCourses에서 유저 삭제 (강의 탈퇴)
-        userCoursesRepository.delete(userCourse)
-
-        // Redis에서 해당 강의의 참여자 목록에서 해당 유저(email) 제거
         redisService.removeUserFromCourseManagerList(course.code, course.clss, email)
+        workspaceOperationStore.enqueue(
+            WorkspaceOperationTarget.MEMBERSHIP, userCourse.id, WorkspaceOperationAction.DELETE_MEMBERSHIP
+        )
 
         // 탈퇴한 강의의 courseId 반환
         return course.id
+    }
+
+    @Transactional
+    fun retryMembership(courseId: Long, email: String) {
+        val user = userRepository.findByEmail(email)
+            ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "User not found")
+        val membership = userCoursesRepository.findByUserIdAndCourseId(user.id, courseId)
+            ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "User is not enrolled in this course")
+        if (membership.lifecycleStatus !in setOf(MembershipStatus.PROVISION_FAILED, MembershipStatus.DELETE_FAILED)) {
+            throw ResponseStatusException(HttpStatus.CONFLICT, "현재 가입 정보에 실패한 작업이 없습니다.")
+        }
+        if (!workspaceOperationStore.retry(WorkspaceOperationTarget.MEMBERSHIP, membership.id)) {
+            throw ResponseStatusException(HttpStatus.CONFLICT, "재시도할 실패 작업이 없습니다.")
+        }
     }
 
 
@@ -422,15 +494,22 @@ class UserService(
         val userCourse = userCoursesRepository.findByUserIdAndCourseId(user.id, course.id)
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "User is not enrolled in this course")
 
-        // Kubernetes Deployment/Service를 먼저 회수한 뒤 DB 접근권한을 제거한다.
-        jCodeService.deleteAllJCodesForUserCourse(userCourse, token)
+        if (userCourse.lifecycleStatus in setOf(MembershipStatus.DELETE_PENDING, MembershipStatus.ARCHIVED)) return course.id
+        userCourse.lifecycleStatus = MembershipStatus.DELETE_PENDING
+        userCourse.lastError = null
+        userCoursesRepository.save(userCourse)
+        jcodeRepository.findAllByUserCourse(userCourse).forEach { jcode ->
+            if (jcode.lifecycleStatus != JcodeLifecycleStatus.ARCHIVED) {
+                jcode.lifecycleStatus = JcodeLifecycleStatus.DELETE_PENDING
+                jcode.lastError = null
+                jcodeRepository.save(jcode)
+            }
+        }
         redisService.deleteUserCourseAccess(user.email, course.code, course.clss)
-
-        // UserCourses에서 유저 삭제 (강의 탈퇴)
-        userCoursesRepository.delete(userCourse)
-
-        // Redis에서 해당 강의의 참여자 목록에서 해당 유저(email) 제거
         redisService.removeUserFromCourseManagerList(course.code, course.clss, user.email)
+        workspaceOperationStore.enqueue(
+            WorkspaceOperationTarget.MEMBERSHIP, userCourse.id, WorkspaceOperationAction.DELETE_MEMBERSHIP
+        )
 
         // 탈퇴한 강의의 courseId 반환
         return course.id

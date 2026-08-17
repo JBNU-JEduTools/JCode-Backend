@@ -158,7 +158,15 @@ class UserController(
             "courseId" to courseId,
             "msg" to "Successfully left the course"
         )
-        return ResponseEntity.ok(response)
+        return ResponseEntity.accepted().body(response)
+    }
+
+    @PostMapping("/me/courses/{courseId}/workspace/retry")
+    fun retryMembership(@PathVariable courseId: Long, authentication: Authentication): ResponseEntity<Map<String, String>> {
+        val email = authentication.principal as? String
+            ?: throw ResponseStatusException(HttpStatus.UNAUTHORIZED, "Missing email in authentication")
+        userService.retryMembership(courseId, email)
+        return ResponseEntity.accepted().body(mapOf("msg" to "Workspace 작업 재시도를 요청했습니다."))
     }
 
     // JCode 삭제
@@ -171,7 +179,8 @@ class UserController(
         @PathVariable courseId: Long,
         @RequestHeader("Authorization") authorization: String,
         authentication: Authentication,
-        @RequestParam(name = "snapshot", required = false, defaultValue = "false") snapshot: Boolean
+        @RequestParam(name = "snapshot", required = false, defaultValue = "false") snapshot: Boolean,
+        @RequestParam(name = "assignmentId", required = false) assignmentId: Long?
     ): ResponseEntity<String> {
         // Authorization 헤더에서 "Bearer " 접두사를 제거하여 토큰만 추출 및 검증
         val token = authorization.removePrefix("Bearer").trim()
@@ -182,8 +191,8 @@ class UserController(
         val email = authentication.principal as? String
             ?: throw ResponseStatusException(HttpStatus.UNAUTHORIZED, "Missing email in authentication")
 
-        jCodeService.deleteJCode(email, courseId, token, snapshot)
-        return ResponseEntity.ok("JCode deleted successfully")
+        jCodeService.deleteJCode(email, courseId, token, snapshot, assignmentId)
+        return ResponseEntity.accepted().body("JCode delete requested")
     }
 
     //  일반 로그인 jwt 인증 함수

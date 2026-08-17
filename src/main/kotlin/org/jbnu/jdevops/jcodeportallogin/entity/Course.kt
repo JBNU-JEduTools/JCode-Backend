@@ -40,6 +40,31 @@ data class Course(
     @Column(nullable = false)
     val vnc: Boolean,
 
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 24)
+    val environmentProfile: CourseEnvironmentProfile = if (vnc) CourseEnvironmentProfile.LAB else CourseEnvironmentProfile.ALGORITHM,
+
+    @Column(nullable = false)
+    val useVnc: Boolean = vnc,
+
+    @Column(nullable = false)
+    val useJupyter: Boolean = vnc,
+
+    @Column(length = 512)
+    val baseImage: String? = null,
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 24)
+    val resourceProfile: WorkspaceResourceProfile = WorkspaceResourceProfile.STANDARD,
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 24)
+    val egressPolicy: WorkspaceEgressPolicy = WorkspaceEgressPolicy.PACKAGE_PROXY,
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 24)
+    val workspaceScope: WorkspaceScope = WorkspaceScope.COURSE,
+
     @Column(nullable = false)
     val hwCount: Int = 10,
 
