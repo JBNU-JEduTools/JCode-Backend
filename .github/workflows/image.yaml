@@ -10,7 +10,8 @@ permissions:
   contents: read
 
 env:
-  IMAGE: harbor.jbnu.ac.kr/jdevops/jcode-backend
+  HARBOR_REGISTRY: ${{ vars.HARBOR_REGISTRY || 'harbor.jedutools.io' }}
+  IMAGE: ${{ vars.HARBOR_REGISTRY || 'harbor.jedutools.io' }}/jdevops/jcode-backend
 
 jobs:
   build:
@@ -25,7 +26,7 @@ jobs:
           HARBOR_PASSWORD: ${{ secrets.HARBOR_PASSWORD }}
         run: |
           for attempt in 1 2 3 4 5; do
-            if printf '%s' "$HARBOR_PASSWORD" | timeout 30 docker login harbor.jbnu.ac.kr --username "$HARBOR_USERNAME" --password-stdin; then
+            if printf '%s' "$HARBOR_PASSWORD" | timeout 30 docker login "$HARBOR_REGISTRY" --username "$HARBOR_USERNAME" --password-stdin; then
               exit 0
             fi
             sleep $((attempt * 5))

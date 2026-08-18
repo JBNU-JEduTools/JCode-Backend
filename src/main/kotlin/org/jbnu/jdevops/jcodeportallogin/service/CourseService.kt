@@ -26,6 +26,7 @@ import org.jbnu.jdevops.jcodeportallogin.repo.UserRepository
 import org.jbnu.jdevops.jcodeportallogin.repo.StarterArtifactRepository
 import org.jbnu.jdevops.jcodeportallogin.repo.JCodeRepository
 import org.jbnu.jdevops.jcodeportallogin.util.CourseKeyUtil
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
 import org.springframework.web.server.ResponseStatusException
 import org.springframework.http.HttpStatus
@@ -44,7 +45,9 @@ class CourseService(
     private val starterArtifactRepository: StarterArtifactRepository,
     private val jCodeRepository: JCodeRepository,
     private val workspaceOperationStore: WorkspaceOperationStore,
-    private val infrastructureOperationStore: CourseInfrastructureOperationStore
+    private val infrastructureOperationStore: CourseInfrastructureOperationStore,
+    @Value("\${HARBOR_REGISTRY:harbor.jedutools.io}")
+    private val harborRegistry: String = "harbor.jedutools.io"
 ) {
     private data class ResolvedWorkspaceProfile(
         val type: CourseEnvironmentProfile,
@@ -84,7 +87,11 @@ class CourseService(
                     ?: throw ResponseStatusException(HttpStatus.BAD_REQUEST, "CUSTOM 환경은 workspaceScope가 필요합니다.")
             )
         }
-        if (profile.baseImage != null && !Regex("^harbor\\.jbnu\\.ac\\.kr/.+(@sha256:[0-9a-f]{64}|:[^/@]*[0-9a-f]{7,40}(?:[-._][^/]*)?)$").matches(profile.baseImage)) {
+        val registry = harborRegistry.trim().lowercase().removeSuffix("/")
+        if (!Regex("[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[1-9][0-9]{0,4})?").matches(registry)) {
+            throw IllegalStateException("HARBOR_REGISTRY는 scheme과 경로 없는 registry host여야 합니다.")
+        }
+        if (profile.baseImage != null && !Regex("^${Regex.escape(registry)}/.+(@sha256:[0-9a-f]{64}|:[^/@]*[0-9a-f]{7,40}(?:[-._][^/]*)?)$").matches(profile.baseImage)) {
             throw ResponseStatusException(HttpStatus.BAD_REQUEST, "baseImage는 Harbor commit tag 또는 digest로 고정해야 합니다.")
         }
         return profile

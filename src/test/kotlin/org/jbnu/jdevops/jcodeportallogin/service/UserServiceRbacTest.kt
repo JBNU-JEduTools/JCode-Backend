@@ -5,6 +5,9 @@ import org.jbnu.jdevops.jcodeportallogin.entity.CourseStatus
 import org.jbnu.jdevops.jcodeportallogin.entity.RoleType
 import org.jbnu.jdevops.jcodeportallogin.entity.User
 import org.jbnu.jdevops.jcodeportallogin.entity.UserCourses
+import org.jbnu.jdevops.jcodeportallogin.entity.MembershipStatus
+import org.jbnu.jdevops.jcodeportallogin.entity.WorkspaceOperationAction
+import org.jbnu.jdevops.jcodeportallogin.entity.WorkspaceOperationTarget
 import org.jbnu.jdevops.jcodeportallogin.repo.AssignmentRepository
 import org.jbnu.jdevops.jcodeportallogin.repo.CourseRepository
 import org.jbnu.jdevops.jcodeportallogin.repo.JCodeRepository
@@ -39,6 +42,7 @@ class UserServiceRbacTest {
     private val setOperations = mock(SetOperations::class.java) as SetOperations<String, String>
     private val redisService = RedisService(redisTemplate)
     private val jCodeService = mock(JCodeService::class.java)
+    private val workspaceOperationStore = mock(WorkspaceOperationStore::class.java)
 
     private val service = UserService(
         userRepository,
@@ -49,7 +53,8 @@ class UserServiceRbacTest {
         passwordEncoder,
         courseRepository,
         redisService,
-        jCodeService
+        jCodeService,
+        workspaceOperationStore
     )
 
     init {
@@ -93,8 +98,13 @@ class UserServiceRbacTest {
         val result = service.chaseOutCourse(student.id, course.id, professor.email, "token")
 
         assertEquals(course.id, result)
-        verify(jCodeService).deleteAllJCodesForUserCourse(targetUserCourse, "token")
-        verify(userCoursesRepository).delete(targetUserCourse)
+        assertEquals(MembershipStatus.DELETE_PENDING, targetUserCourse.lifecycleStatus)
+        verify(userCoursesRepository).save(targetUserCourse)
+        verify(workspaceOperationStore).enqueue(
+            WorkspaceOperationTarget.MEMBERSHIP,
+            targetUserCourse.id,
+            WorkspaceOperationAction.DELETE_MEMBERSHIP
+        )
         verify(redisTemplate).delete("user:${student.email}:course:${course.code}:${course.clss}")
         verify(redisTemplate).delete("user:${student.email}:course:${course.code}:${course.clss}:snapshot")
         verify(setOperations).remove("course:${course.code}:${course.clss}:managers", student.email)

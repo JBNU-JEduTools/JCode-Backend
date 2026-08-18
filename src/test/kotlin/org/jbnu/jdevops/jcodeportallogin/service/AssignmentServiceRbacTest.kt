@@ -9,6 +9,8 @@ import org.jbnu.jdevops.jcodeportallogin.repo.AssignmentRepository
 import org.jbnu.jdevops.jcodeportallogin.repo.CourseRepository
 import org.jbnu.jdevops.jcodeportallogin.repo.UserCoursesRepository
 import org.jbnu.jdevops.jcodeportallogin.repo.UserRepository
+import org.jbnu.jdevops.jcodeportallogin.repo.StarterArtifactRepository
+import org.jbnu.jdevops.jcodeportallogin.repo.JCodeRepository
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
@@ -27,6 +29,9 @@ class AssignmentServiceRbacTest {
     private val courseRepository = mock(CourseRepository::class.java)
     private val userRepository = mock(UserRepository::class.java)
     private val userCoursesRepository = mock(UserCoursesRepository::class.java)
+    private val starterArtifactRepository = mock(StarterArtifactRepository::class.java)
+    private val jCodeRepository = mock(JCodeRepository::class.java)
+    private val workspaceOperationStore = mock(WorkspaceOperationStore::class.java)
     private val generatorWebClient = WebClient.builder().build()
 
     private val service = AssignmentService(
@@ -34,6 +39,9 @@ class AssignmentServiceRbacTest {
         courseRepository,
         userRepository,
         userCoursesRepository,
+        starterArtifactRepository,
+        jCodeRepository,
+        workspaceOperationStore,
         generatorWebClient
     )
 
@@ -50,7 +58,7 @@ class AssignmentServiceRbacTest {
         }
 
         assertEquals(HttpStatus.FORBIDDEN, ex.statusCode)
-        verify(assignmentRepository, never()).delete(org.mockito.ArgumentMatchers.any(Assignment::class.java))
+        verify(assignmentRepository, never()).save(org.mockito.ArgumentMatchers.any(Assignment::class.java))
     }
 
     @Test
@@ -64,7 +72,7 @@ class AssignmentServiceRbacTest {
         }
 
         assertEquals(HttpStatus.FORBIDDEN, ex.statusCode)
-        verify(assignmentRepository, never()).delete(org.mockito.ArgumentMatchers.any(Assignment::class.java))
+        verify(assignmentRepository, never()).save(org.mockito.ArgumentMatchers.any(Assignment::class.java))
     }
 
     @Test
@@ -83,7 +91,13 @@ class AssignmentServiceRbacTest {
 
         service.deleteAssignment(courseId, assignmentId, assistant.email)
 
-        verify(assignmentRepository).delete(assignment)
+        assertEquals(org.jbnu.jdevops.jcodeportallogin.entity.AssignmentLifecycleStatus.DELETING, assignment.lifecycleStatus)
+        verify(assignmentRepository).save(assignment)
+        verify(workspaceOperationStore).enqueue(
+            org.jbnu.jdevops.jcodeportallogin.entity.WorkspaceOperationTarget.ASSIGNMENT,
+            assignment.id,
+            org.jbnu.jdevops.jcodeportallogin.entity.WorkspaceOperationAction.ARCHIVE_ASSIGNMENT
+        )
     }
 
     @Test

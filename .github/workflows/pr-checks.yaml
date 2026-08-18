@@ -19,6 +19,8 @@ jobs:
           cache: gradle
       - uses: gradle/actions/setup-gradle@v4
       - run: ./gradlew test --no-daemon
+      - name: Validate MariaDB migrations
+        run: scripts/test-migrations.sh
       - name: Validate Kubernetes DNS settings
         run: |
           python3 - <<'PY'

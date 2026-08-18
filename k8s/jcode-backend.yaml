@@ -22,7 +22,7 @@ spec:
       - name: watcher-harbor-registry-secret
       containers:
       - name: jcode-backend
-        image: harbor.jbnu.ac.kr/jdevops/jcode-backend:REPLACE_WITH_COMMIT_SHA
+        image: harbor.jedutools.io/jdevops/jcode-backend:REPLACE_WITH_COMMIT_SHA
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8080
