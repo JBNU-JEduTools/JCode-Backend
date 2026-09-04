@@ -156,6 +156,8 @@ class JCodeService(
         status = lifecycleStatus,
         jcodeUrl = jcodeUrl,
         assignmentId = assignment?.id,
-        lastError = lastError
+        lastError = lastError?.let {
+            "JCode 환경 처리 중 오류가 발생했습니다. 잠시 후 재시도하거나 관리자에게 문의해주세요."
+        }
     )
 }

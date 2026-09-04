@@ -1,0 +1,21 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: jcode-bootstrap-assignment-path-backfill
+  namespace: watcher
+  labels:
+    app.kubernetes.io/part-of: jcode
+spec:
+  podSelector:
+    matchLabels:
+      app: jcode-bootstrap
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: jcode-assignment-path-backfill
+    ports:
+    - protocol: TCP
+      port: 5000

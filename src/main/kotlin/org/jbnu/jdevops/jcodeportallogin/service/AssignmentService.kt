@@ -93,7 +93,9 @@ class AssignmentService(
             hasStarterCode = assignment.hasStarterCode,
             lifecycleStatus = assignment.lifecycleStatus,
             scheduleStatus = assignment.scheduleStatus,
-            lastError = assignment.lastError,
+            lastError = assignment.lastError?.let {
+                "과제 환경 처리 중 오류가 발생했습니다. 잠시 후 재시도하거나 관리자에게 문의해주세요."
+            },
             starterVersion = starter?.version,
             starterChecksum = starter?.checksum,
             starterOverwritePolicy = starter?.overwritePolicy,

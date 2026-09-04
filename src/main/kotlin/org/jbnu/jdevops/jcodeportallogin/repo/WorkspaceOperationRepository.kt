@@ -10,6 +10,8 @@ import org.springframework.data.repository.query.Param
 import java.time.LocalDateTime
 
 interface WorkspaceOperationRepository : JpaRepository<WorkspaceOperation, Long> {
+    fun existsByIdempotencyKey(idempotencyKey: String): Boolean
+
     fun existsByTargetTypeAndTargetIdAndStatusIn(
         targetType: WorkspaceOperationTarget,
         targetId: Long,

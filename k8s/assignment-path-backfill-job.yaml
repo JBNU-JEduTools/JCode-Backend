@@ -1,0 +1,48 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: jcode-assignment-path-backfill
+  namespace: watcher
+  labels:
+    app: jcode-assignment-path-backfill
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app: jcode-assignment-path-backfill
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      dnsConfig:
+        options:
+        - name: ndots
+          value: "2"
+      imagePullSecrets:
+      - name: watcher-harbor-registry-secret
+      containers:
+      - name: backfill
+        image: harbor.jedutools.io/jdevops/jcode-backend:REPLACE_WITH_COMMIT_SHA
+        imagePullPolicy: IfNotPresent
+        args:
+        - --workspace.assignment-path-backfill.enabled=true
+        - --workspace.assignment-path-backfill.missing-namespace=archive
+        - --course.lifecycle.initial-delay-ms=86400000
+        - --workspace.lifecycle.initial-delay-ms=86400000
+        - --assignment.schedule.refresh-ms=86400000
+        env:
+        - name: SPRING_PROFILES_ACTIVE
+          value: prod
+        - name: TZ
+          value: Asia/Seoul
+        envFrom:
+        - configMapRef:
+            name: jcode-backend-config
+        - secretRef:
+            name: jcode-backend-secret
+        resources:
+          requests:
+            cpu: 200m
+            memory: 512Mi
+          limits:
+            memory: 1Gi

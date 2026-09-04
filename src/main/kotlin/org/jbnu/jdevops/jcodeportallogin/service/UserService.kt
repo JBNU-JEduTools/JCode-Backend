@@ -125,7 +125,9 @@ class UserService(
                 courseYear = it.course.year,
                 status = it.course.status,
                 membershipStatus = it.lifecycleStatus,
-                membershipError = it.lastError
+                membershipError = it.lastError?.let {
+                    "강의 참여 환경 처리 중 오류가 발생했습니다. 잠시 후 재시도하거나 관리자에게 문의해주세요."
+                }
             )
         }
     }
@@ -150,7 +152,9 @@ class UserService(
                 courseYear = it.course.year,
                 status = it.course.status,
                 membershipStatus = it.lifecycleStatus,
-                membershipError = it.lastError
+                membershipError = it.lastError?.let {
+                    "강의 참여 환경 처리 중 오류가 발생했습니다. 잠시 후 재시도하거나 관리자에게 문의해주세요."
+                }
             )
         }
     }
@@ -168,7 +172,9 @@ class UserService(
                 status = it.lifecycleStatus,
                 jcodeUrl = it.jcodeUrl,
                 assignmentId = it.assignment?.id,
-                lastError = it.lastError
+                lastError = it.lastError?.let {
+                    "JCode 환경 처리 중 오류가 발생했습니다. 잠시 후 재시도하거나 관리자에게 문의해주세요."
+                }
             )
         }
     }
@@ -201,7 +207,9 @@ class UserService(
                 workspaceScope = it.course.workspaceScope,
                 courseRole = it.role,
                 membershipStatus = it.lifecycleStatus,
-                membershipError = it.lastError,
+                membershipError = it.lastError?.let {
+                    "강의 참여 환경 처리 중 오류가 발생했습니다. 잠시 후 재시도하거나 관리자에게 문의해주세요."
+                },
                 assignments = assignments.map { assignment ->
                     AssignmentDto(
                         assignmentId = assignment.id,
@@ -212,7 +220,9 @@ class UserService(
                         hasStarterCode = assignment.hasStarterCode,
                         lifecycleStatus = assignment.lifecycleStatus,
                         scheduleStatus = assignment.scheduleStatus,
-                        lastError = assignment.lastError,
+                        lastError = assignment.lastError?.let {
+                            "과제 환경 처리 중 오류가 발생했습니다. 잠시 후 재시도하거나 관리자에게 문의해주세요."
+                        },
                         archiveRetentionDays = assignment.archiveRetentionDays,
                         archivedAt = assignment.archivedAt?.toString(),
                         finalizedAt = assignment.finalizedAt?.toString(),

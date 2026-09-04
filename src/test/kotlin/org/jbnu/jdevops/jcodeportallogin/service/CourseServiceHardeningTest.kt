@@ -94,6 +94,18 @@ class CourseServiceHardeningTest {
     }
 
     @Test
+    fun `duplicate active namespace is rejected before persistence`() {
+        `when`(courseRepository.existsByNamespaceKey("jcode-alg-1")).thenReturn(true)
+
+        val error = assertThrows<ResponseStatusException> {
+            service.createCourse(dto(code = "ALG", clss = 1, vnc = false), "professor@example.com")
+        }
+
+        assertEquals(HttpStatus.CONFLICT, error.statusCode)
+        verify(courseRepository, never()).save(org.mockito.ArgumentMatchers.any(Course::class.java))
+    }
+
+    @Test
     fun `legacy vnc course is converted to lab profile`() {
         val creator = User(id = 7, email = "professor@example.com", role = RoleType.PROFESSOR)
         `when`(courseKeyUtil.generateCourseEnrollmentCode("LAB", 1)).thenReturn("raw-key")
@@ -229,6 +241,7 @@ class CourseServiceHardeningTest {
 
     @Test
     fun `failed infrastructure work can be retried`() {
+        `when`(courseRepository.findById(10)).thenReturn(Optional.of(course()))
         `when`(infrastructureOperationStore.retryFailed(10)).thenReturn(true)
 
         service.retryInfrastructure(10)
@@ -238,11 +251,23 @@ class CourseServiceHardeningTest {
 
     @Test
     fun `retry is rejected when no failed infrastructure work exists`() {
+        `when`(courseRepository.findById(10)).thenReturn(Optional.of(course()))
         `when`(infrastructureOperationStore.retryFailed(10)).thenReturn(false)
 
         val ex = assertThrows<ResponseStatusException> { service.retryInfrastructure(10) }
 
         assertEquals(HttpStatus.CONFLICT, ex.statusCode)
+    }
+
+    @Test
+    fun `unfinished course deletion delegates to safe infrastructure cleanup`() {
+        val course = course().also { it.status = CourseStatus.ERROR }
+        `when`(courseRepository.findById(course.id)).thenReturn(Optional.of(course))
+        `when`(infrastructureOperationStore.cancelForDiscard(course.id)).thenReturn(true)
+
+        service.deleteCourse(course.id)
+
+        verify(infrastructureOperationStore).cancelForDiscard(course.id)
     }
 
     private fun course() = Course(
@@ -253,6 +278,7 @@ class CourseServiceHardeningTest {
         term = 1,
         professor = "Professor",
         clss = 1,
+        namespaceKey = "jcode-alg-1",
         vnc = false,
         courseKey = "course-key",
     )

@@ -37,6 +37,11 @@ data class Course(
     @Column(nullable = false)
     val clss: Int,
 
+    // Non-archived courses reserve their Kubernetes namespace through this key.
+    // It is nullable so a failed duplicate record or archived history can remain.
+    @Column(name = "namespace_key", length = 63, unique = true)
+    var namespaceKey: String? = null,
+
     @Column(nullable = false)
     val vnc: Boolean,
 
@@ -94,4 +99,8 @@ data class Course(
 
     @OneToMany(mappedBy = "course", cascade = [CascadeType.ALL], orphanRemoval = true, fetch = FetchType.LAZY)
     var assignments: MutableList<Assignment> = mutableListOf()
-)
+) {
+    companion object {
+        fun namespaceKey(code: String, clss: Int) = "jcode-${code.trim().lowercase()}-$clss"
+    }
+}

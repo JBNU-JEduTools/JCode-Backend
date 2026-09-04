@@ -2,6 +2,7 @@ package org.jbnu.jdevops.jcodeportallogin.controller
 
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.tags.Tag
+import jakarta.validation.Valid
 import org.jbnu.jdevops.jcodeportallogin.dto.assignment.AssignmentDto
 import org.jbnu.jdevops.jcodeportallogin.dto.course.CourseDto
 import org.jbnu.jdevops.jcodeportallogin.dto.user.UserInfoDto
@@ -70,7 +71,7 @@ class CourseController(
     @Operation(summary = "강의 추가", description = "새로운 강의를 생성합니다. (ADMIN, PROFESSOR 전용)")
     @PreAuthorize("hasAnyRole('ADMIN', 'PROFESSOR')")
     @PostMapping
-    fun createCourse(@RequestBody courseDto: CourseDto, authentication: Authentication): ResponseEntity<CourseDto> {
+    fun createCourse(@Valid @RequestBody courseDto: CourseDto, authentication: Authentication): ResponseEntity<CourseDto> {
         val email = authentication.principal as? String
             ?: throw ResponseStatusException(HttpStatus.UNAUTHORIZED, "Missing email in authentication")
         return ResponseEntity.status(HttpStatus.ACCEPTED).body(courseService.createCourse(courseDto, email))
@@ -80,19 +81,19 @@ class CourseController(
     @Operation(summary = "강의 수정", description = "특정 강의의 정보를 수정합니다. (ADMIN, PROFESSOR 전용)")
     @PreAuthorize("hasAnyRole('ADMIN', 'PROFESSOR')")
     @PutMapping("/{courseId}")
-    fun updateCourse(@PathVariable courseId: Long, @RequestBody courseDto: CourseDto, authentication: Authentication): ResponseEntity<CourseDto> {
+    fun updateCourse(@PathVariable courseId: Long, @Valid @RequestBody courseDto: CourseDto, authentication: Authentication): ResponseEntity<CourseDto> {
         val email = authentication.principal as? String
             ?: throw ResponseStatusException(HttpStatus.UNAUTHORIZED, "Missing email in authentication")
         return ResponseEntity.ok(courseService.updateCourse(courseId, courseDto, email))
     }
 
     // 강의 삭제 (ADMIN 전용)
-    @Operation(summary = "강의 삭제", description = "특정 강의를 삭제합니다. (ADMIN 전용)")
+    @Operation(summary = "강의 생성 취소", description = "생성 중이거나 생성에 실패한 강의를 취소하고 인프라를 정리합니다. (ADMIN 전용)")
     @PreAuthorize("hasRole('ADMIN')")
     @DeleteMapping("/{courseId}")
     fun deleteCourse(@PathVariable courseId: Long): ResponseEntity<String> {
         courseService.deleteCourse(courseId)
-        return ResponseEntity.ok("Course deleted successfully")
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body("Course creation cancellation requested")
     }
 
     // 강의 종료 (ADMIN 전용)

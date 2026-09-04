@@ -21,6 +21,13 @@ interface CourseInfrastructureOperationRepository : JpaRepository<CourseInfrastr
         status: CourseInfrastructureOperationStatus
     ): CourseInfrastructureOperation?
 
+    fun findByCourseIdAndStatusIn(
+        courseId: Long,
+        statuses: Collection<CourseInfrastructureOperationStatus>
+    ): List<CourseInfrastructureOperation>
+
+    fun findTopByCourseIdOrderByCreatedAtDesc(courseId: Long): CourseInfrastructureOperation?
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query(
         """

@@ -118,6 +118,8 @@ class CourseService(
         pracCount = pracCount,
         status = status,
         endedAt = endedAt?.toString(),
+        canCancelCreation = status == CourseStatus.PROVISIONING ||
+            (status == CourseStatus.ERROR && infrastructureOperationStore.isProvisioningFailure(id)),
         courseKey = courseKeyValue
     )
 
@@ -187,7 +189,9 @@ class CourseService(
                 hasStarterCode = it.hasStarterCode,
                 lifecycleStatus = it.lifecycleStatus,
                 scheduleStatus = it.scheduleStatus,
-                lastError = it.lastError,
+                lastError = it.lastError?.let {
+                    "과제 환경 처리 중 오류가 발생했습니다. 잠시 후 재시도하거나 관리자에게 문의해주세요."
+                },
                 starterVersion = starter?.version,
                 starterChecksum = starter?.checksum,
                 starterOverwritePolicy = starter?.overwritePolicy,
@@ -224,6 +228,13 @@ class CourseService(
     @Transactional
     fun createCourse(courseDto: CourseDto, creatorEmail: String): CourseDto {
         val profile = resolveWorkspaceProfile(courseDto)
+        val namespaceKey = Course.namespaceKey(courseDto.code, courseDto.clss)
+        if (courseRepository.existsByNamespaceKey(namespaceKey)) {
+            throw ResponseStatusException(
+                HttpStatus.CONFLICT,
+                "같은 강의 코드와 분반의 강의가 이미 존재합니다. 기존 강의 상태를 확인해주세요."
+            )
+        }
         // 랜덤 key를 생성하여 할당
         val rawKey = courseKeyUtil.generateCourseEnrollmentCode(courseDto.code, courseDto.clss)
         // PasswordEncoder를 사용해 암호화 (해싱) 처리
@@ -234,6 +245,7 @@ class CourseService(
             code = courseDto.code,
             professor = courseDto.professor,
             clss = courseDto.clss,
+            namespaceKey = namespaceKey,
             year = courseDto.year,
             term = courseDto.term,
             vnc = profile.useVnc,
@@ -297,9 +309,17 @@ class CourseService(
 
     @Transactional
     fun deleteCourse(courseId: Long) {
-        courseRepository.findById(courseId)
+        val course = courseRepository.findById(courseId)
             .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "Course not found") }
-        throw ResponseStatusException(HttpStatus.CONFLICT, "강의와 과제 이력은 보관되며 물리 삭제하지 않습니다.")
+        if (course.status !in setOf(CourseStatus.PROVISIONING, CourseStatus.ERROR)) {
+            throw ResponseStatusException(
+                HttpStatus.CONFLICT,
+                "생성 중이거나 생성에 실패한 강의만 취소할 수 있습니다. 운영한 강의는 종료 후 보관해주세요."
+            )
+        }
+        if (!infrastructureOperationStore.cancelForDiscard(courseId)) {
+            throw ResponseStatusException(HttpStatus.CONFLICT, "강의 생성 취소를 시작할 수 없습니다.")
+        }
     }
 
     // 강의 종료 요청: DB에 desired state와 작업을 기록하고 reconciler가 완료한다.
@@ -409,6 +429,14 @@ class CourseService(
     }
 
     fun retryInfrastructure(courseId: Long) {
+        val course = courseRepository.findById(courseId)
+            .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "Course not found") }
+        if (course.namespaceKey == null) {
+            throw ResponseStatusException(
+                HttpStatus.CONFLICT,
+                "같은 강의 코드와 분반을 사용하는 기존 강의가 있어 재시도할 수 없습니다. 이 항목을 취소해주세요."
+            )
+        }
         if (!infrastructureOperationStore.retryFailed(courseId)) {
             throw ResponseStatusException(HttpStatus.CONFLICT, "재시도할 실패 작업이 없습니다.")
         }
@@ -442,7 +470,9 @@ class CourseService(
                     hasStarterCode = assignment.hasStarterCode,
                     lifecycleStatus = assignment.lifecycleStatus,
                     scheduleStatus = assignment.scheduleStatus,
-                    lastError = assignment.lastError,
+                    lastError = assignment.lastError?.let {
+                        "과제 환경 처리 중 오류가 발생했습니다. 잠시 후 재시도하거나 관리자에게 문의해주세요."
+                    },
                     starterVersion = starter?.version,
                     starterChecksum = starter?.checksum,
                     starterOverwritePolicy = starter?.overwritePolicy,

@@ -73,18 +73,28 @@ class CourseInfrastructureOperationStore(
     @Transactional
     fun markSucceeded(operationId: Long) {
         val operation = operationRepository.findById(operationId).orElseThrow()
+        if (operation.status != CourseInfrastructureOperationStatus.PROCESSING) return
         val course = courseRepository.findById(operation.courseId).orElse(null)
         if (course != null) {
             when (operation.action) {
                 CourseInfrastructureAction.PROVISION_NAMESPACE -> {
-                    course.status = CourseStatus.ACTIVE
-                    course.endedAt = null
+                    if (course.status == CourseStatus.PROVISIONING) {
+                        course.status = CourseStatus.ACTIVE
+                        course.endedAt = null
+                    }
                 }
                 CourseInfrastructureAction.DELETE_WORKLOADS -> {
-                    course.status = CourseStatus.ENDED
-                    course.endedAt = LocalDateTime.now()
+                    if (course.status == CourseStatus.TERMINATING) {
+                        course.status = CourseStatus.ENDED
+                        course.endedAt = LocalDateTime.now()
+                    }
                 }
-                CourseInfrastructureAction.DELETE_NAMESPACE -> course.status = CourseStatus.ARCHIVED
+                CourseInfrastructureAction.DELETE_NAMESPACE -> {
+                    if (course.status == CourseStatus.ARCHIVING) {
+                        course.status = CourseStatus.ARCHIVED
+                        course.namespaceKey = null
+                    }
+                }
             }
             courseRepository.save(course)
         }
@@ -98,24 +108,67 @@ class CourseInfrastructureOperationStore(
     @Transactional
     fun markFailed(operationId: Long, error: Throwable) {
         val operation = operationRepository.findById(operationId).orElseThrow()
+        if (operation.status != CourseInfrastructureOperationStatus.PROCESSING) return
         val now = LocalDateTime.now()
         operation.lastError = (error.message ?: error.javaClass.simpleName).take(4000)
         operation.lockedAt = null
         operation.updatedAt = now
         if (operation.attempts >= maxAttempts) {
             operation.status = CourseInfrastructureOperationStatus.FAILED
+            courseRepository.findById(operation.courseId).ifPresent { course ->
+                course.status = CourseStatus.ERROR
+                courseRepository.save(course)
+            }
         } else {
             operation.status = CourseInfrastructureOperationStatus.PENDING
             val delaySeconds = min(300L, 1L shl min(operation.attempts, 8))
             operation.nextAttemptAt = now.plusSeconds(delaySeconds)
         }
         operationRepository.save(operation)
-
-        courseRepository.findById(operation.courseId).ifPresent { course ->
-            course.status = CourseStatus.ERROR
-            courseRepository.save(course)
-        }
     }
+
+    @Transactional
+    fun cancelForDiscard(courseId: Long): Boolean {
+        val course = courseRepository.findById(courseId).orElse(null) ?: return false
+        if (course.status !in setOf(CourseStatus.PROVISIONING, CourseStatus.ERROR)) return false
+        if (course.status == CourseStatus.ERROR && !isProvisioningFailure(courseId)) return false
+
+        val cancellable = setOf(
+            CourseInfrastructureOperationStatus.PENDING,
+            CourseInfrastructureOperationStatus.PROCESSING,
+            CourseInfrastructureOperationStatus.FAILED
+        )
+        val now = LocalDateTime.now()
+        operationRepository.findByCourseIdAndStatusIn(courseId, cancellable).forEach { operation ->
+            operation.status = CourseInfrastructureOperationStatus.CANCELLED
+            operation.lockedAt = null
+            operation.updatedAt = now
+            operationRepository.save(operation)
+        }
+
+        if (course.namespaceKey == null) {
+            // A legacy duplicate never owned the namespace, so no K8s cleanup is allowed.
+            course.status = CourseStatus.ARCHIVED
+            course.endedAt = now
+            courseRepository.save(course)
+            return true
+        }
+
+        course.status = CourseStatus.ARCHIVING
+        courseRepository.save(course)
+        operationRepository.save(
+            CourseInfrastructureOperation(
+                courseId = courseId,
+                action = CourseInfrastructureAction.DELETE_NAMESPACE
+            )
+        )
+        return true
+    }
+
+    @Transactional(readOnly = true)
+    fun isProvisioningFailure(courseId: Long): Boolean =
+        operationRepository.findTopByCourseIdOrderByCreatedAtDesc(courseId)?.action ==
+            CourseInfrastructureAction.PROVISION_NAMESPACE
 
     @Transactional
     fun retryFailed(courseId: Long): Boolean {

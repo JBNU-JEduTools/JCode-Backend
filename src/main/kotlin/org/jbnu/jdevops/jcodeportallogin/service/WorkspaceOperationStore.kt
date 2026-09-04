@@ -10,7 +10,9 @@ import org.springframework.beans.factory.annotation.Value
 import org.springframework.data.domain.PageRequest
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import java.nio.charset.StandardCharsets
 import java.time.LocalDateTime
+import java.util.UUID
 import kotlin.math.min
 
 data class ClaimedWorkspaceOperation(
@@ -39,6 +41,22 @@ class WorkspaceOperationStore(
     fun enqueue(targetType: WorkspaceOperationTarget, targetId: Long, action: WorkspaceOperationAction, artifactId: Long? = null) {
         operationRepository.save(
             WorkspaceOperation(targetType = targetType, targetId = targetId, action = action, artifactId = artifactId)
+        )
+    }
+
+    @Transactional
+    fun enqueueBackfillOnce(targetId: Long, action: WorkspaceOperationAction) {
+        val key = UUID.nameUUIDFromBytes(
+            "assignment-v7:$targetId:${action.name}".toByteArray(StandardCharsets.UTF_8)
+        ).toString()
+        if (operationRepository.existsByIdempotencyKey(key)) return
+        operationRepository.save(
+            WorkspaceOperation(
+                targetType = WorkspaceOperationTarget.ASSIGNMENT,
+                targetId = targetId,
+                action = action,
+                idempotencyKey = key
+            )
         )
     }
 
@@ -251,6 +269,21 @@ class WorkspaceOperationStore(
             stored.status = WorkspaceOperationStatus.PENDING
             stored.nextAttemptAt = now.plusSeconds(min(300L, 1L shl min(stored.attempts, 8)))
         }
+        operationRepository.save(stored)
+    }
+
+    @Transactional
+    fun defer(operation: ClaimedWorkspaceOperation, delaySeconds: Long = 3) {
+        val stored = operationRepository.findById(operation.id).orElseThrow()
+        if (stored.status != WorkspaceOperationStatus.PROCESSING) return
+        val now = LocalDateTime.now()
+        stored.status = WorkspaceOperationStatus.PENDING
+        // Readiness polling is not a failed attempt and must not exhaust max-attempts.
+        stored.attempts = (stored.attempts - 1).coerceAtLeast(0)
+        stored.nextAttemptAt = now.plusSeconds(delaySeconds)
+        stored.lockedAt = null
+        stored.lastError = null
+        stored.updatedAt = now
         operationRepository.save(stored)
     }
 

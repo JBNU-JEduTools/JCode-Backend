@@ -16,8 +16,20 @@ import org.springframework.web.reactive.function.client.WebClient
 import org.springframework.web.server.ResponseStatusException
 import java.time.Duration
 import java.time.LocalDateTime
+import java.time.OffsetDateTime
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import com.fasterxml.jackson.annotation.JsonProperty
 import org.slf4j.LoggerFactory
+
+internal fun parseWatcherTimestamp(value: String): LocalDateTime =
+    runCatching {
+        OffsetDateTime.parse(value, DateTimeFormatter.ISO_DATE_TIME)
+            .atZoneSameInstant(ZoneId.of("Asia/Seoul"))
+            .toLocalDateTime()
+    }.getOrElse {
+        LocalDateTime.parse(value, DateTimeFormatter.ISO_LOCAL_DATE_TIME)
+    }
 
 @Service
 class SubmissionDashboardService(
@@ -133,8 +145,8 @@ class SubmissionDashboardService(
         val runCount = summary.runCount
         val totalSizeChange = summary.totalSizeChange
         val maxSingleChange = summary.maxSingleChange
-        val firstActivity = summary.firstActivity?.let(LocalDateTime::parse)
-        val lastActivity = summary.lastActivity?.let(LocalDateTime::parse)
+        val firstActivity = summary.firstActivity?.let(::parseWatcherTimestamp)
+        val lastActivity = summary.lastActivity?.let(::parseWatcherTimestamp)
         val totalWorkMinutes = if (firstActivity != null && lastActivity != null) {
             Duration.between(firstActivity, lastActivity).toMinutes()
         } else 0L

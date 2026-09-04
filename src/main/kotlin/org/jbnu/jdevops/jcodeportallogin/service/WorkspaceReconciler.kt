@@ -11,6 +11,8 @@ import org.springframework.stereotype.Component
 import org.springframework.web.reactive.function.client.WebClient
 import java.time.Duration
 
+private class WorkspaceProvisioningPendingException : RuntimeException()
+
 @Component
 class WorkspaceReconciler(
     private val operationStore: WorkspaceOperationStore,
@@ -31,6 +33,8 @@ class WorkspaceReconciler(
             try {
                 val result = execute(operation)
                 operationStore.markSucceeded(operation, result)
+            } catch (_: WorkspaceProvisioningPendingException) {
+                operationStore.defer(operation)
             } catch (error: Exception) {
                 logger.error(
                     "Workspace reconcile failed: target={}/{}, action={}, attempt={}",
@@ -207,36 +211,54 @@ class WorkspaceReconciler(
             WorkspaceOperationAction.PROVISION_JCODE -> if (
                 jcode.lifecycleStatus == JcodeLifecycleStatus.PROVISIONING &&
                 jcode.userCourse.lifecycleStatus == MembershipStatus.READY
-            ) post(
-                "/api/jcode",
-                "jcode:write",
-                operation.idempotencyKey,
-                mapOf(
-                    "course_id" to course.id,
-                    "namespace" to namespace,
-                    "deployment_name" to jcode.deploymentName,
-                    "service_name" to jcode.serviceName,
-                    "app_label" to jcode.deploymentName,
-                    "file_path" to if (jcode.snapshot) {
-                        "${course.code.lowercase()}-${course.clss}"
-                    } else "workspace/${course.code.lowercase()}-${course.clss}-${jcode.user.studentNum}",
-                    "student_num" to jcode.user.studentNum.toString(),
-                    "use_vnc" to course.useVnc,
-                    "environment_profile" to course.environmentProfile.name,
-                    "use_jupyter" to course.useJupyter,
-                    "base_image" to course.baseImage,
-                    "resource_profile" to course.resourceProfile.name,
-                    "egress_policy" to course.egressPolicy.name,
-                    "workspace_scope" to course.workspaceScope.name,
-                    "assignment_workspace_key" to jcode.assignment?.workspaceKey,
-                    "use_snapshot" to jcode.snapshot,
-                    "hw_count" to course.hwCount,
-                    "prac_count" to if (course.pracEnabled) course.pracCount else 0,
-                    "assignment_dirs" to if (course.workspaceScope == WorkspaceScope.COURSE) {
-                        operationStore.loadActiveAssignmentKeys(course.id)
-                    } else emptyList<String>()
+            ) {
+                val provisioned = post(
+                    "/api/jcode",
+                    "jcode:write",
+                    operation.idempotencyKey,
+                    mapOf(
+                        "course_id" to course.id,
+                        "namespace" to namespace,
+                        "deployment_name" to jcode.deploymentName,
+                        "service_name" to jcode.serviceName,
+                        "app_label" to jcode.deploymentName,
+                        "file_path" to if (jcode.snapshot) {
+                            "${course.code.lowercase()}-${course.clss}"
+                        } else "workspace/${course.code.lowercase()}-${course.clss}-${jcode.user.studentNum}",
+                        "student_num" to jcode.user.studentNum.toString(),
+                        "use_vnc" to course.useVnc,
+                        "environment_profile" to course.environmentProfile.name,
+                        "use_jupyter" to course.useJupyter,
+                        "base_image" to course.baseImage,
+                        "resource_profile" to course.resourceProfile.name,
+                        "egress_policy" to course.egressPolicy.name,
+                        "workspace_scope" to course.workspaceScope.name,
+                        "assignment_workspace_key" to jcode.assignment?.workspaceKey,
+                        "use_snapshot" to jcode.snapshot,
+                        "hw_count" to course.hwCount,
+                        "prac_count" to if (course.pracEnabled) course.pracCount else 0,
+                        "assignment_dirs" to if (course.workspaceScope == WorkspaceScope.COURSE) {
+                            operationStore.loadActiveAssignmentKeys(course.id)
+                        } else emptyList<String>()
+                    )
                 )
-            ) else skipped
+                val readiness = getJcodeReadiness(
+                    course.id,
+                    namespace,
+                    jcode.deploymentName,
+                    jcode.serviceName
+                )
+                when (readiness["state"]?.toString()) {
+                    "READY" -> mapOf(
+                        "jcodeUrl" to (provisioned?.get("jcodeUrl")
+                            ?: "http://${jcode.serviceName}.$namespace.svc.cluster.local:8080")
+                    )
+                    "FAILED" -> throw IllegalStateException(
+                        "JCode workload readiness failed: ${readiness["reasonCode"] ?: "UNKNOWN"}"
+                    )
+                    else -> throw WorkspaceProvisioningPendingException()
+                }
+            } else skipped
             WorkspaceOperationAction.DELETE_JCODE -> if (jcode.lifecycleStatus in setOf(
                 JcodeLifecycleStatus.DELETE_PENDING,
                 JcodeLifecycleStatus.DELETE_FAILED,
@@ -255,6 +277,27 @@ class WorkspaceReconciler(
             else -> throw IllegalStateException("JCode 대상에 잘못된 작업입니다: ${operation.action}")
         }
     }
+
+    private fun getJcodeReadiness(
+        courseId: Long,
+        namespace: String,
+        deploymentName: String,
+        serviceName: String
+    ): Map<*, *> = generator.get()
+        .uri { builder ->
+            builder.path("/api/jcode/status")
+                .queryParam("course_id", courseId)
+                .queryParam("namespace", namespace)
+                .queryParam("deployment_name", deploymentName)
+                .queryParam("service_name", serviceName)
+                .build()
+        }
+        .attribute(GENERATOR_SCOPE_ATTRIBUTE, "jcode:read")
+        .retrieve()
+        .bodyToMono(Map::class.java)
+        .timeout(Duration.ofSeconds(timeoutSeconds))
+        .block()
+        ?: throw IllegalStateException("Generator가 JCode 준비 상태를 반환하지 않았습니다.")
 
     private fun post(uri: String, scope: String, idempotencyKey: String, body: Map<String, Any?>): Map<*, *>? =
         generator.post()

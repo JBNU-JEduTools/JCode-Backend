@@ -21,7 +21,8 @@ enum class CourseInfrastructureOperationStatus {
     PENDING,
     PROCESSING,
     SUCCEEDED,
-    FAILED
+    FAILED,
+    CANCELLED
 }
 
 @Entity

@@ -2,6 +2,7 @@ package org.jbnu.jdevops.jcodeportallogin.controller
 
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.tags.Tag
+import jakarta.validation.Valid
 import org.jbnu.jdevops.jcodeportallogin.dto.assignment.AssignmentDto
 import org.jbnu.jdevops.jcodeportallogin.entity.StarterOverwritePolicy
 import org.jbnu.jdevops.jcodeportallogin.service.AssignmentService
@@ -23,20 +24,20 @@ class AssignmentController(
     @PostMapping
     fun createAssignment(
         @PathVariable courseId: Long,
-        @RequestBody assignmentDto: AssignmentDto,
+        @Valid @RequestBody assignmentDto: AssignmentDto,
         @RequestHeader("Authorization") authorization: String,
         authentication: Authentication
     ): ResponseEntity<AssignmentDto> {
         val email = authentication.principal as? String
             ?: throw IllegalStateException("인증 정보를 찾을 수 없습니다.")
         val token = authorization.removePrefix("Bearer").trim()
-        return ResponseEntity.ok(assignmentService.createAssignment(courseId, assignmentDto, email, token))
+        return ResponseEntity.accepted().body(assignmentService.createAssignment(courseId, assignmentDto, email, token))
     }
 
     // 과제 수정
     @Operation(summary = "과제 수정", description = "특정 강의의 특정 과제를 수정합니다.")
     @PutMapping("/{assignmentId}")
-    fun updateAssignment(@PathVariable courseId: Long, @PathVariable assignmentId: Long, @RequestBody assignmentDto: AssignmentDto, authentication: Authentication): ResponseEntity<AssignmentDto> {
+    fun updateAssignment(@PathVariable courseId: Long, @PathVariable assignmentId: Long, @Valid @RequestBody assignmentDto: AssignmentDto, authentication: Authentication): ResponseEntity<AssignmentDto> {
         val email = authentication.principal as? String
             ?: throw IllegalStateException("인증 정보를 찾을 수 없습니다.")
         return ResponseEntity.ok(assignmentService.updateAssignment(courseId, assignmentId, assignmentDto, email))

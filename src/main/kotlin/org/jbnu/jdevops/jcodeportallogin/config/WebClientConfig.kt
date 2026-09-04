@@ -59,7 +59,7 @@ class WebClientConfig {
     fun generatorBootstrapWebClient(tokenProvider: GeneratorServiceTokenProvider): WebClient = generatorClient(
         generatorBootstrapUrl,
         tokenProvider,
-        setOf("namespace:write", "namespace:delete")
+        setOf("namespace:read", "namespace:write", "namespace:delete")
     )
 
     @Bean
