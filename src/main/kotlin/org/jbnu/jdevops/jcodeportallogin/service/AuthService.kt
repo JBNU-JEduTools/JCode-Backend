@@ -62,11 +62,12 @@ class AuthService(
         val email = jwtAuthService.extractEmail(refreshToken, TokenType.REFRESH)
 
         // 3. Refresh token 검증 (유효성, 블랙리스트, Redis 저장값 일치 여부)
-        RefreshTokenUtil.validate(refreshToken, jwtAuthService, redisService, email)
+        RefreshTokenUtil.validate(refreshToken, jwtAuthService, redisService)
 
         // 4. 세션 검증: HTTP 세션이 없으면 오류 처리
-        val session = request.getSession(false)
-            ?: throw ResponseStatusException(HttpStatus.UNAUTHORIZED, "No active session")
+        if (request.getSession(false) == null) {
+            throw ResponseStatusException(HttpStatus.UNAUTHORIZED, "No active session")
+        }
 
         // 5. 사용자 조회 및 역할 추출
         val user = userRepository.findByEmail(email)
@@ -78,13 +79,14 @@ class AuthService(
         val newAccessToken = jwtAuthService.createToken(email, role, TokenType.ACCESS, assistantCourseIds)
         val newRefreshToken = jwtAuthService.createToken(email, role, TokenType.REFRESH, assistantCourseIds)
 
-        // 7. Redis에 새로운 refresh token 저장
-        redisService.storeRefreshToken(email, newRefreshToken)
+        // 7. 현재 token과 일치할 때만 원자적으로 교체한다. 동시 요청은 같은 결과를 재사용한다.
+        val rotatedRefreshToken = redisService.rotateRefreshToken(email, refreshToken, newRefreshToken)
+            ?: throw ResponseStatusException(HttpStatus.UNAUTHORIZED, "Refresh token was already replaced")
 
         // 두 토큰을 Map에 담아서 반환
         return mapOf(
             "accessToken" to newAccessToken,
-            "refreshToken" to newRefreshToken
+            "refreshToken" to rotatedRefreshToken
         )
     }
 
@@ -99,7 +101,7 @@ class AuthService(
         val email = jwtAuthService.extractEmail(refreshToken, TokenType.REFRESH)
 
         // 3. refresh token 검증 (유효성, 블랙리스트, Redis 저장값 일치 여부 확인)
-        RefreshTokenUtil.validate(refreshToken, jwtAuthService, redisService, email)
+        RefreshTokenUtil.validate(refreshToken, jwtAuthService, redisService)
 
         // 4. 사용자 조회
         val user = userRepository.findByEmail(email)
@@ -111,13 +113,14 @@ class AuthService(
         val newAccessToken = jwtAuthService.createToken(email, role, TokenType.ACCESS, assistantCourseIds)
         val newRefreshToken = jwtAuthService.createToken(email, role, TokenType.REFRESH, assistantCourseIds)
 
-        // 6. Redis에 새로운 refresh token 저장
-        redisService.storeRefreshToken(email, newRefreshToken)
+        // 6. Redis에서 검증과 교체를 하나의 CAS로 수행한다.
+        val rotatedRefreshToken = redisService.rotateRefreshToken(email, refreshToken, newRefreshToken)
+            ?: throw ResponseStatusException(HttpStatus.UNAUTHORIZED, "Refresh token was already replaced")
 
         // 두 토큰을 Map에 담아서 반환
         return mapOf(
             "accessToken" to newAccessToken,
-            "refreshToken" to newRefreshToken
+            "refreshToken" to rotatedRefreshToken
         )
     }
 }

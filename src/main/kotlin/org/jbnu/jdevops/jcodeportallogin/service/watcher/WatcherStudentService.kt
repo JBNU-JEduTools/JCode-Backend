@@ -46,7 +46,7 @@ class WatcherStudentService(
             throw ResponseStatusException(HttpStatus.NOT_FOUND, "UserCourse not found")
         }
 
-        val classDiv = "${course.code.lowercase()}-${course.clss}"
+        val classDiv = "${course.infrastructureKey.lowercase()}-${course.clss}"
 
         return try {
             webClient.get()
@@ -87,7 +87,7 @@ class WatcherStudentService(
             throw ResponseStatusException(HttpStatus.NOT_FOUND, "UserCourse not found")
         }
 
-        val classDiv = "${course.code.lowercase()}-${course.clss}"
+        val classDiv = "${course.infrastructureKey.lowercase()}-${course.clss}"
 
         return try {
             webClient.get()
@@ -128,7 +128,7 @@ class WatcherStudentService(
             throw ResponseStatusException(HttpStatus.NOT_FOUND, "UserCourse not found")
         }
 
-        val classDiv = "${course.code.lowercase()}-${course.clss}"
+        val classDiv = "${course.infrastructureKey.lowercase()}-${course.clss}"
 
         return try {
             webClient.get()
@@ -169,7 +169,7 @@ class WatcherStudentService(
             throw ResponseStatusException(HttpStatus.NOT_FOUND, "UserCourse not found")
         }
 
-        val classDiv = "${course.code.lowercase()}-${course.clss}"
+        val classDiv = "${course.infrastructureKey.lowercase()}-${course.clss}"
 
         return try {
             webClient.get()
@@ -210,7 +210,7 @@ class WatcherStudentService(
             throw ResponseStatusException(HttpStatus.NOT_FOUND, "UserCourse not found")
         }
 
-        val classDiv = "${course.code.lowercase()}-${course.clss}"
+        val classDiv = "${course.infrastructureKey.lowercase()}-${course.clss}"
 
         return try {
             webClient.get()

@@ -100,7 +100,7 @@ class AssignmentPathBackfillServiceTest {
     private fun course(status: CourseStatus) = Course(
         id = 7,
         name = "Algorithms",
-        code = "ALG",
+        infrastructureKey = "ALG",
         year = 2026,
         term = 1,
         professor = "Professor",

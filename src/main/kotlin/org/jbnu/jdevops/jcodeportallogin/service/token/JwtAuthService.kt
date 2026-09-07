@@ -43,6 +43,7 @@ class JwtAuthService(
 
         return Jwts.builder()
             .setClaims(claims)
+            .setId(UUID.randomUUID().toString())
             .setIssuedAt(Date())
             .setExpiration(Date(System.currentTimeMillis() + expireTime))
             .signWith(key)

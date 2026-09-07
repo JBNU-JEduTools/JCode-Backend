@@ -72,7 +72,7 @@ class CourseInfrastructureOperationStoreTest {
     private fun course() = Course(
         id = 10,
         name = "Algorithms",
-        code = "ALG",
+        infrastructureKey = "ALG",
         year = 2026,
         term = 1,
         professor = "Professor",

@@ -53,7 +53,7 @@ class GeneratorCourseNamespaceLookup(
     @Value("\${workspace.lifecycle.request-timeout-seconds:90}") private val timeoutSeconds: Long
 ) : CourseNamespaceLookup {
     override fun exists(course: Course): Boolean {
-        val namespace = "jcode-${course.code.lowercase()}-${course.clss}"
+        val namespace = course.namespaceKey ?: Course.namespaceKey(course.infrastructureKey, course.clss)
         val response = generator.get()
             .uri { builder ->
                 builder.path("/api/namespace/{namespace}")
@@ -83,7 +83,7 @@ class AssignmentPathBackfillService(
             .distinctBy { it.id }
         val namespaceExists = activeCourses.associate { course -> course.id to namespaceLookup.exists(course) }
         val missing = activeCourses.filter { namespaceExists[it.id] != true }
-            .map { "jcode-${it.code.lowercase()}-${it.clss}" }
+            .map { it.namespaceKey ?: Course.namespaceKey(it.infrastructureKey, it.clss) }
             .sorted()
 
         if (missing.isNotEmpty() && policy == MissingNamespacePolicy.FAIL) {

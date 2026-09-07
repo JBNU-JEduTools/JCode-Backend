@@ -16,7 +16,8 @@ class JCodeService(
     private val userRepository: UserRepository,
     private val userCoursesRepository: UserCoursesRepository,
     private val assignmentRepository: AssignmentRepository,
-    private val workspaceOperationStore: WorkspaceOperationStore
+    private val workspaceOperationStore: WorkspaceOperationStore,
+    private val redisService: RedisService
 ) {
     @Transactional
     fun createJCode(
@@ -31,6 +32,9 @@ class JCodeService(
             .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "Course not found") }
         if (course.status != CourseStatus.ACTIVE) {
             throw ResponseStatusException(HttpStatus.CONFLICT, "종료된 강의에서는 JCode를 생성할 수 없습니다.")
+        }
+        if (!course.workspaceRuntimeEnabled) {
+            throw ResponseStatusException(HttpStatus.CONFLICT, "강의 실행 환경이 아직 준비되지 않았습니다.")
         }
         val actor = userRepository.findByEmail(email)
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "User not found")
@@ -71,9 +75,9 @@ class JCodeService(
 
         val suffix = assignment?.let { "-${it.id}" } ?: ""
         val deploymentName = if (snapshot) {
-            "jcode-snapshot-${course.code.lowercase()}-${target.studentNum}$suffix"
+            "jcode-snapshot-${course.infrastructureKey.lowercase()}-${target.studentNum}$suffix"
         } else {
-            "jcode-${course.code.lowercase()}-${course.clss}-${target.studentNum}$suffix"
+            "jcode-${course.infrastructureKey.lowercase()}-${course.clss}-${target.studentNum}$suffix"
         }
         val jcode = jCodeRepository.saveAndFlush(
             Jcode(
@@ -121,6 +125,7 @@ class JCodeService(
         jcode.lifecycleStatus = JcodeLifecycleStatus.DELETE_PENDING
         jcode.lastError = null
         jCodeRepository.save(jcode)
+        redisService.deleteJcodeRoute(jcode.id)
         workspaceOperationStore.enqueue(
             WorkspaceOperationTarget.JCODE, jcode.id, WorkspaceOperationAction.DELETE_JCODE
         )
@@ -154,6 +159,9 @@ class JCodeService(
         jcodeId = id,
         courseName = course.name,
         status = lifecycleStatus,
+        observedStatus = observedStatus,
+        observedReason = observedReason,
+        lastObservedAt = lastObservedAt,
         jcodeUrl = jcodeUrl,
         assignmentId = assignment?.id,
         lastError = lastError?.let {

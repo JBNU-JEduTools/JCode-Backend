@@ -19,6 +19,7 @@ import org.jbnu.jdevops.jcodeportallogin.repo.UserCoursesRepository
 import org.jbnu.jdevops.jcodeportallogin.repo.UserRepository
 import org.jbnu.jdevops.jcodeportallogin.util.CourseKeyUtil
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import org.mockito.Mockito.mock
@@ -26,6 +27,8 @@ import org.mockito.Mockito.never
 import org.mockito.Mockito.verify
 import org.mockito.Mockito.`when`
 import org.mockito.ArgumentCaptor
+import org.mockito.ArgumentMatchers.anyString
+import org.mockito.ArgumentMatchers.eq
 import org.springframework.http.HttpStatus
 import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.web.server.ResponseStatusException
@@ -43,6 +46,7 @@ class CourseServiceHardeningTest {
     private val starterArtifactRepository = mock(org.jbnu.jdevops.jcodeportallogin.repo.StarterArtifactRepository::class.java)
     private val jCodeRepository = mock(org.jbnu.jdevops.jcodeportallogin.repo.JCodeRepository::class.java)
     private val workspaceOperationStore = mock(WorkspaceOperationStore::class.java)
+    private val redisService = mock(RedisService::class.java)
     private val service = CourseService(
         userCoursesRepository,
         assignmentRepository,
@@ -54,13 +58,14 @@ class CourseServiceHardeningTest {
         jCodeRepository,
         workspaceOperationStore,
         infrastructureOperationStore,
+        redisService,
     )
 
     @Test
     fun `course infrastructure identifiers cannot be edited`() {
         val course = course()
         val admin = User(id = 1, email = "admin@example.com", role = RoleType.ADMIN, studentNum = 1)
-        val request = dto(code = "NEWCODE", clss = course.clss, vnc = course.vnc)
+        val request = dto(clss = course.clss + 1, vnc = course.vnc)
         `when`(userRepository.findByEmail(admin.email)).thenReturn(admin)
         `when`(courseRepository.findById(course.id)).thenReturn(Optional.of(course))
 
@@ -75,18 +80,28 @@ class CourseServiceHardeningTest {
     @Test
     fun `course creator is registered as course professor`() {
         val creator = User(id = 7, email = "professor@example.com", role = RoleType.PROFESSOR)
-        val savedCourse = course().copy(id = 44, status = CourseStatus.PROVISIONING)
-        `when`(courseKeyUtil.generateCourseEnrollmentCode("ALG", 1)).thenReturn("raw-key")
+            .also { it.name = "Authenticated Professor" }
+        `when`(courseKeyUtil.generateCourseEnrollmentCode(anyString(), eq(1), eq(10))).thenReturn("raw-key")
         `when`(passwordEncoder.encode("raw-key")).thenReturn("encoded-key")
-        `when`(courseRepository.save(org.mockito.ArgumentMatchers.any(Course::class.java))).thenReturn(savedCourse)
+        `when`(courseRepository.save(org.mockito.ArgumentMatchers.any(Course::class.java))).thenAnswer {
+            (it.arguments[0] as Course).copy(id = 44)
+        }
         `when`(userRepository.findByEmail(creator.email)).thenReturn(creator)
 
-        val result = service.createCourse(dto(code = "ALG", clss = 1, vnc = false), creator.email)
+        val result = service.createCourse(
+            dto(clss = 1, vnc = false).copy(professor = "Spoofed Professor"),
+            creator.email
+        )
 
+        val saved = ArgumentCaptor.forClass(Course::class.java)
         val membership = ArgumentCaptor.forClass(UserCourses::class.java)
+        verify(courseRepository).save(saved.capture())
         verify(userCoursesRepository).save(membership.capture())
         assertEquals(44, result.courseId)
-        assertEquals(savedCourse, membership.value.course)
+        assertEquals("Authenticated Professor", saved.value.professor)
+        assertTrue(saved.value.infrastructureKey.matches(Regex("[0-9a-f]{12}")))
+        assertEquals("jcode-${saved.value.infrastructureKey}-1", saved.value.namespaceKey)
+        assertEquals(44, membership.value.course.id)
         assertEquals(creator, membership.value.user)
         assertEquals(RoleType.PROFESSOR, membership.value.role)
         assertEquals(CourseStatus.PROVISIONING, result.status)
@@ -94,28 +109,45 @@ class CourseServiceHardeningTest {
     }
 
     @Test
-    fun `duplicate active namespace is rejected before persistence`() {
-        `when`(courseRepository.existsByNamespaceKey("jcode-alg-1")).thenReturn(true)
+    fun `student cannot create a course through the service`() {
+        val student = User(id = 8, email = "student@example.com", role = RoleType.STUDENT, studentNum = 20260001)
+        `when`(userRepository.findByEmail(student.email)).thenReturn(student)
 
         val error = assertThrows<ResponseStatusException> {
-            service.createCourse(dto(code = "ALG", clss = 1, vnc = false), "professor@example.com")
+            service.createCourse(dto(clss = 1, vnc = false), student.email)
         }
 
-        assertEquals(HttpStatus.CONFLICT, error.statusCode)
+        assertEquals(HttpStatus.FORBIDDEN, error.statusCode)
+        verify(courseRepository, never()).save(org.mockito.ArgumentMatchers.any(Course::class.java))
+    }
+
+    @Test
+    fun `infrastructure identity allocation failure is rejected before persistence`() {
+        val creator = User(id = 7, email = "professor@example.com", role = RoleType.PROFESSOR)
+            .also { it.name = "Professor" }
+        `when`(userRepository.findByEmail(creator.email)).thenReturn(creator)
+        `when`(courseRepository.existsByNamespaceKey(anyString())).thenReturn(true)
+
+        val error = assertThrows<ResponseStatusException> {
+            service.createCourse(dto(clss = 1, vnc = false), creator.email)
+        }
+
+        assertEquals(HttpStatus.SERVICE_UNAVAILABLE, error.statusCode)
         verify(courseRepository, never()).save(org.mockito.ArgumentMatchers.any(Course::class.java))
     }
 
     @Test
     fun `legacy vnc course is converted to lab profile`() {
         val creator = User(id = 7, email = "professor@example.com", role = RoleType.PROFESSOR)
-        `when`(courseKeyUtil.generateCourseEnrollmentCode("LAB", 1)).thenReturn("raw-key")
+            .also { it.name = "Professor" }
+        `when`(courseKeyUtil.generateCourseEnrollmentCode(anyString(), eq(1), eq(10))).thenReturn("raw-key")
         `when`(passwordEncoder.encode("raw-key")).thenReturn("encoded-key")
         `when`(userRepository.findByEmail(creator.email)).thenReturn(creator)
         `when`(courseRepository.save(org.mockito.ArgumentMatchers.any(Course::class.java))).thenAnswer {
             (it.arguments[0] as Course).copy(id = 45)
         }
 
-        val result = service.createCourse(dto(code = "LAB", clss = 1, vnc = true), creator.email)
+        val result = service.createCourse(dto(clss = 1, vnc = true), creator.email)
 
         assertEquals(CourseEnvironmentProfile.LAB, result.environmentProfile)
         assertEquals(true, result.useVnc)
@@ -125,7 +157,7 @@ class CourseServiceHardeningTest {
 
     @Test
     fun `custom profile rejects mutable image tag`() {
-        val request = dto(code = "CUSTOM", clss = 1, vnc = false).copy(
+        val request = dto(clss = 1, vnc = false).copy(
             environmentProfile = CourseEnvironmentProfile.CUSTOM,
             useVnc = false,
             useJupyter = true,
@@ -145,6 +177,7 @@ class CourseServiceHardeningTest {
     @Test
     fun `custom profile accepts immutable image from configured registry`() {
         val creator = User(id = 7, email = "professor@example.com", role = RoleType.PROFESSOR)
+            .also { it.name = "Professor" }
         val configuredService = CourseService(
             userCoursesRepository,
             assignmentRepository,
@@ -156,9 +189,10 @@ class CourseServiceHardeningTest {
             jCodeRepository,
             workspaceOperationStore,
             infrastructureOperationStore,
+            redisService,
             "registry.internal:5443",
         )
-        val request = dto(code = "CUSTOM", clss = 1, vnc = false).copy(
+        val request = dto(clss = 1, vnc = false).copy(
             environmentProfile = CourseEnvironmentProfile.CUSTOM,
             useVnc = false,
             useJupyter = true,
@@ -167,7 +201,7 @@ class CourseServiceHardeningTest {
             egressPolicy = org.jbnu.jdevops.jcodeportallogin.entity.WorkspaceEgressPolicy.RESTRICTED,
             workspaceScope = org.jbnu.jdevops.jcodeportallogin.entity.WorkspaceScope.ASSIGNMENT
         )
-        `when`(courseKeyUtil.generateCourseEnrollmentCode("CUSTOM", 1)).thenReturn("raw-key")
+        `when`(courseKeyUtil.generateCourseEnrollmentCode(anyString(), eq(1), eq(10))).thenReturn("raw-key")
         `when`(passwordEncoder.encode("raw-key")).thenReturn("encoded-key")
         `when`(userRepository.findByEmail(creator.email)).thenReturn(creator)
         `when`(courseRepository.save(org.mockito.ArgumentMatchers.any(Course::class.java))).thenAnswer {
@@ -273,7 +307,7 @@ class CourseServiceHardeningTest {
     private fun course() = Course(
         id = 10,
         name = "Algorithms",
-        code = "ALG",
+        infrastructureKey = "ALG",
         year = 2026,
         term = 1,
         professor = "Professor",
@@ -283,10 +317,9 @@ class CourseServiceHardeningTest {
         courseKey = "course-key",
     )
 
-    private fun dto(code: String, clss: Int, vnc: Boolean) = CourseDto(
+    private fun dto(clss: Int, vnc: Boolean) = CourseDto(
         courseId = 10,
         name = "Algorithms",
-        code = code,
         professor = "Professor",
         year = 2026,
         term = 1,

@@ -82,14 +82,18 @@ class CourseInfrastructureOperationStore(
                         course.status = CourseStatus.ACTIVE
                         course.endedAt = null
                     }
+                    course.workspaceRuntimeEnabled = true
                 }
+                CourseInfrastructureAction.SYNC_NAMESPACE_METADATA -> Unit
                 CourseInfrastructureAction.DELETE_WORKLOADS -> {
+                    course.workspaceRuntimeEnabled = false
                     if (course.status == CourseStatus.TERMINATING) {
                         course.status = CourseStatus.ENDED
                         course.endedAt = LocalDateTime.now()
                     }
                 }
                 CourseInfrastructureAction.DELETE_NAMESPACE -> {
+                    course.workspaceRuntimeEnabled = false
                     if (course.status == CourseStatus.ARCHIVING) {
                         course.status = CourseStatus.ARCHIVED
                         course.namespaceKey = null
@@ -115,9 +119,11 @@ class CourseInfrastructureOperationStore(
         operation.updatedAt = now
         if (operation.attempts >= maxAttempts) {
             operation.status = CourseInfrastructureOperationStatus.FAILED
-            courseRepository.findById(operation.courseId).ifPresent { course ->
-                course.status = CourseStatus.ERROR
-                courseRepository.save(course)
+            if (operation.action != CourseInfrastructureAction.SYNC_NAMESPACE_METADATA) {
+                courseRepository.findById(operation.courseId).ifPresent { course ->
+                    course.status = CourseStatus.ERROR
+                    courseRepository.save(course)
+                }
             }
         } else {
             operation.status = CourseInfrastructureOperationStatus.PENDING
@@ -149,12 +155,14 @@ class CourseInfrastructureOperationStore(
         if (course.namespaceKey == null) {
             // A legacy duplicate never owned the namespace, so no K8s cleanup is allowed.
             course.status = CourseStatus.ARCHIVED
+            course.workspaceRuntimeEnabled = false
             course.endedAt = now
             courseRepository.save(course)
             return true
         }
 
         course.status = CourseStatus.ARCHIVING
+        course.workspaceRuntimeEnabled = false
         courseRepository.save(course)
         operationRepository.save(
             CourseInfrastructureOperation(
@@ -183,6 +191,7 @@ class CourseInfrastructureOperationStore(
 
         course.status = when (operation.action) {
             CourseInfrastructureAction.PROVISION_NAMESPACE -> CourseStatus.PROVISIONING
+            CourseInfrastructureAction.SYNC_NAMESPACE_METADATA -> course.status
             CourseInfrastructureAction.DELETE_WORKLOADS -> CourseStatus.TERMINATING
             CourseInfrastructureAction.DELETE_NAMESPACE -> CourseStatus.ARCHIVING
         }

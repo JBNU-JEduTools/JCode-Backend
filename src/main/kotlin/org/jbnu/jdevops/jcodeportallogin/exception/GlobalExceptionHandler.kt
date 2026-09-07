@@ -6,6 +6,7 @@ import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.http.HttpStatus
 import org.springframework.http.HttpStatusCode
 import org.springframework.http.ResponseEntity
+import org.springframework.http.converter.HttpMessageNotReadableException
 import org.springframework.web.bind.MethodArgumentNotValidException
 import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.RestControllerAdvice
@@ -65,6 +66,22 @@ class GlobalExceptionHandler {
             request,
             requestId,
             fields
+        )
+    }
+
+    @ExceptionHandler(HttpMessageNotReadableException::class)
+    fun handleUnreadableMessage(
+        exception: HttpMessageNotReadableException,
+        request: HttpServletRequest
+    ): ResponseEntity<ApiErrorResponse> {
+        val requestId = requestId(request)
+        logger.warn("Unreadable API request: requestId={}, path={}", requestId, request.requestURI)
+        return response(
+            HttpStatus.BAD_REQUEST,
+            "INVALID_REQUEST_BODY",
+            "입력 정보를 확인해주세요.",
+            request,
+            requestId
         )
     }
 

@@ -9,6 +9,13 @@ import org.springframework.web.reactive.function.client.WebClient
 import org.springframework.web.reactive.function.client.ClientRequest
 
 const val GENERATOR_SCOPE_ATTRIBUTE = "generator.scope"
+internal val WORKSPACE_GENERATOR_SCOPES = setOf(
+    "namespace:resources:delete",
+    "jcode:read",
+    "jcode:write",
+    "jcode:delete",
+    "workspace:write"
+)
 
 @Configuration
 class WebClientConfig {
@@ -66,6 +73,6 @@ class WebClientConfig {
     fun generatorWorkspaceWebClient(tokenProvider: GeneratorServiceTokenProvider): WebClient = generatorClient(
         generatorWorkspaceUrl,
         tokenProvider,
-        setOf("namespace:resources:delete", "jcode:write", "jcode:delete", "workspace:write")
+        WORKSPACE_GENERATOR_SCOPES
     )
 }

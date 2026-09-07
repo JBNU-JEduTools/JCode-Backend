@@ -9,7 +9,7 @@ import kotlin.test.assertEquals
 class WatcherAssignmentKeyTest {
     private val course = Course(
         name = "Algorithms",
-        code = "alg",
+        infrastructureKey = "alg",
         year = 2026,
         term = 1,
         professor = "Professor",

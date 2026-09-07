@@ -45,6 +45,17 @@ class WorkspaceOperationStore(
     }
 
     @Transactional
+    fun enqueueOnce(targetType: WorkspaceOperationTarget, targetId: Long, action: WorkspaceOperationAction): Boolean {
+        if (operationRepository.existsByTargetTypeAndTargetIdAndStatusIn(targetType, targetId, active)) {
+            return false
+        }
+        operationRepository.save(
+            WorkspaceOperation(targetType = targetType, targetId = targetId, action = action)
+        )
+        return true
+    }
+
+    @Transactional
     fun enqueueBackfillOnce(targetId: Long, action: WorkspaceOperationAction) {
         val key = UUID.nameUUIDFromBytes(
             "assignment-v7:$targetId:${action.name}".toByteArray(StandardCharsets.UTF_8)
@@ -126,6 +137,14 @@ class WorkspaceOperationStore(
         }
         .map { it.workspaceKey }
 
+    @Transactional(readOnly = true)
+    fun loadActiveAssignmentLabels(courseId: Long): Map<String, String> = assignmentRepository.findByCourseId(courseId)
+        .filter {
+            it.lifecycleStatus == AssignmentLifecycleStatus.ACTIVE &&
+                it.scheduleStatus in setOf(AssignmentScheduleStatus.SCHEDULED, AssignmentScheduleStatus.OPEN)
+        }
+        .associate { it.workspaceKey to it.name }
+
     @Transactional
     fun markSucceeded(operation: ClaimedWorkspaceOperation, result: Map<*, *>? = null) {
         val stored = operationRepository.findById(operation.id).orElseThrow()
@@ -138,6 +157,11 @@ class WorkspaceOperationStore(
                     it.updatedAt = LocalDateTime.now()
                     assignmentRepository.save(it)
                 }
+            }
+            WorkspaceOperationAction.UPDATE_ASSIGNMENT_METADATA -> assignmentRepository.findById(operation.targetId).ifPresent {
+                it.lastError = null
+                it.updatedAt = LocalDateTime.now()
+                assignmentRepository.save(it)
             }
             WorkspaceOperationAction.RESTORE_ASSIGNMENT -> assignmentRepository.findById(operation.targetId).ifPresent {
                 it.lifecycleStatus = AssignmentLifecycleStatus.ACTIVE
@@ -156,11 +180,18 @@ class WorkspaceOperationStore(
                     assignmentRepository.save(artifact.assignment)
                 } }
             }
-            WorkspaceOperationAction.ARCHIVE_FINAL_SUBMISSION -> assignmentRepository.findById(operation.targetId).ifPresent {
-                if (it.lifecycleStatus == AssignmentLifecycleStatus.ACTIVE && it.scheduleStatus == AssignmentScheduleStatus.CLOSED) {
-                    it.finalizedAt = LocalDateTime.now()
-                    it.lastError = null
-                    assignmentRepository.save(it)
+            WorkspaceOperationAction.ARCHIVE_FINAL_SUBMISSION -> {
+                val assignment = assignmentRepository.findById(operation.targetId)
+                    .orElseThrow { IllegalStateException("최종 보관 대상 과제를 찾을 수 없습니다.") }
+                if (assignment.finalizedAt == null) {
+                    if (assignment.lifecycleStatus != AssignmentLifecycleStatus.ACTIVE ||
+                        assignment.scheduleStatus != AssignmentScheduleStatus.CLOSED
+                    ) {
+                        throw IllegalStateException("닫힌 ACTIVE 과제만 최종 보관 완료 처리할 수 있습니다.")
+                    }
+                    assignment.finalizedAt = LocalDateTime.now()
+                    assignment.lastError = null
+                    assignmentRepository.save(assignment)
                 }
             }
             WorkspaceOperationAction.ARCHIVE_ASSIGNMENT -> assignmentRepository.findById(operation.targetId).ifPresent {
@@ -193,6 +224,9 @@ class WorkspaceOperationStore(
                     it.jcodeUrl = result?.get("jcodeUrl") as? String
                         ?: throw IllegalStateException("Generator가 jcodeUrl을 반환하지 않았습니다.")
                     it.lifecycleStatus = JcodeLifecycleStatus.READY
+                    it.observedStatus = JcodeObservedStatus.READY
+                    it.observedReason = "READY"
+                    it.lastObservedAt = LocalDateTime.now()
                     it.lastError = null
                     jCodeRepository.save(it)
                 } else {
@@ -211,6 +245,9 @@ class WorkspaceOperationStore(
             }
             WorkspaceOperationAction.DELETE_JCODE -> jCodeRepository.findById(operation.targetId).ifPresent {
                 it.lifecycleStatus = JcodeLifecycleStatus.ARCHIVED
+                it.observedStatus = JcodeObservedStatus.MISSING
+                it.observedReason = "DELETED"
+                it.lastObservedAt = LocalDateTime.now()
                 it.archivedAt = LocalDateTime.now()
                 it.lastError = null
                 jCodeRepository.save(it)
@@ -257,6 +294,9 @@ class WorkspaceOperationStore(
                         JcodeLifecycleStatus.DELETE_FAILED
                     } else JcodeLifecycleStatus.PROVISION_FAILED
                     it.lastError = message
+                    it.observedStatus = JcodeObservedStatus.FAILED
+                    it.observedReason = "RECONCILE_FAILED"
+                    it.lastObservedAt = now
                     jCodeRepository.save(it)
                 }
             }

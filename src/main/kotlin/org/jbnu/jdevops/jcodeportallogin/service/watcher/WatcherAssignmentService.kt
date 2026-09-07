@@ -25,7 +25,16 @@ class WatcherAssignmentService(
     private val userRepository: UserRepository,
     private val userCoursesRepository: UserCoursesRepository
 ) {
-    fun getAssignmentsData(courseId: Long, assignmentId: Long): WatcherAssignmentDto? {
+    private fun requireMembership(email: String, courseId: Long): RoleType {
+        val user = userRepository.findByEmail(email)
+            ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "User not found")
+        if (user.role == RoleType.ADMIN) return RoleType.ADMIN
+        return userCoursesRepository.findByUserIdAndCourseId(user.id, courseId)?.role
+            ?: throw ResponseStatusException(HttpStatus.FORBIDDEN, "해당 강의에 소속되어 있지 않습니다.")
+    }
+
+    fun getAssignmentsData(email: String, courseId: Long, assignmentId: Long): WatcherAssignmentDto? {
+        requireMembership(email, courseId)
         val course = courseRepository.findById(courseId)
             .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "Course not found") }
 
@@ -36,7 +45,7 @@ class WatcherAssignmentService(
             throw ResponseStatusException(HttpStatus.BAD_REQUEST, "The assignment does not belong to the specified course")
         }
 
-        val classDiv = "${course.code.lowercase()}-${course.clss}"
+        val classDiv = "${course.infrastructureKey.lowercase()}-${course.clss}"
 
         return try {
             webClient.get()
@@ -55,6 +64,7 @@ class WatcherAssignmentService(
     }
 
     fun getAssignmentsTotalGraphData(email: String, courseId: Long, assignmentId: Long, st: LocalDateTime, end: LocalDateTime): AssingmentTotalGraphListData? {
+        val courseRole = requireMembership(email, courseId)
         val user = userRepository.findByEmail(email)
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "User not found")
 
@@ -68,7 +78,7 @@ class WatcherAssignmentService(
             throw ResponseStatusException(HttpStatus.BAD_REQUEST, "The assignment does not belong to the specified course")
         }
 
-        val classDiv = "${course.code.lowercase()}-${course.clss}"
+        val classDiv = "${course.infrastructureKey.lowercase()}-${course.clss}"
 
         return try {
             val graphData = webClient.get()
@@ -81,21 +91,11 @@ class WatcherAssignmentService(
                 .bodyToMono(AssingmentTotalGraphListData::class.java)
                 .block()
 
-            // 유저의 role에 따라 반환 데이터를 달리 가공
-            when (user.role) {
-                RoleType.STUDENT -> {
-                    // 해당 강의에서의 조교 권한 확인
-                    val userCourse = userCoursesRepository.findByUserIdAndCourseId(user.id, courseId)
-                    if (userCourse?.role == RoleType.ASSISTANT) {
-                        graphData
-                    } else {
-                        val totalStudents = userCoursesRepository.countUserCoursesByCourseIdAndRole(courseId, RoleType.STUDENT)
-                        modifyGraphDataForStudent(graphData, user.studentNum, totalStudents, courseId)
-                    }
-                }
-                else -> {  // ADMIN과 PROFESSOR은 전부 반환
-                    graphData
-                }
+            if (courseRole == RoleType.STUDENT) {
+                val totalStudents = userCoursesRepository.countUserCoursesByCourseIdAndRole(courseId, RoleType.STUDENT)
+                modifyGraphDataForStudent(graphData, user.studentNum, totalStudents, courseId)
+            } else {
+                graphData
             }
         } catch (ex: Exception) {
             println("Error calling external API: ${ex.message}")
@@ -144,7 +144,8 @@ class WatcherAssignmentService(
         return AssingmentTotalGraphListData(mutableList)
     }
 
-    fun getBuildLogAvg(courseId: Long, assignmentId: Long): WatcherLogAvgDto? {
+    fun getBuildLogAvg(email: String, courseId: Long, assignmentId: Long): WatcherLogAvgDto? {
+        requireMembership(email, courseId)
         val course = courseRepository.findById(courseId)
             .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "Course not found") }
 
@@ -155,7 +156,7 @@ class WatcherAssignmentService(
             throw ResponseStatusException(HttpStatus.BAD_REQUEST, "The assignment does not belong to the specified course")
         }
 
-        val classDiv = "${course.code.lowercase()}-${course.clss}"
+        val classDiv = "${course.infrastructureKey.lowercase()}-${course.clss}"
 
         return try {
             webClient.get()
@@ -173,7 +174,8 @@ class WatcherAssignmentService(
         }
     }
 
-    fun getRunLogAvg(courseId: Long, assignmentId: Long): WatcherLogAvgDto? {
+    fun getRunLogAvg(email: String, courseId: Long, assignmentId: Long): WatcherLogAvgDto? {
+        requireMembership(email, courseId)
         val course = courseRepository.findById(courseId)
             .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "Course not found") }
 
@@ -184,7 +186,7 @@ class WatcherAssignmentService(
             throw ResponseStatusException(HttpStatus.BAD_REQUEST, "The assignment does not belong to the specified course")
         }
 
-        val classDiv = "${course.code.lowercase()}-${course.clss}"
+        val classDiv = "${course.infrastructureKey.lowercase()}-${course.clss}"
 
         return try {
             webClient.get()

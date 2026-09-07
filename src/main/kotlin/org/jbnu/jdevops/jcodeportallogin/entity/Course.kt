@@ -17,11 +17,11 @@ data class Course(
     @field:Size(max = 100, message = "{course.name.size}")
     val name: String,
 
-    @Column(nullable = false)
-    @field:NotBlank(message = "{course.code.required}")
-    @field:Size(max = 20, message = "{course.code.size}")
-    @field:Pattern(regexp = "^[A-Za-z0-9]+$", message = "{course.code.pattern}")
-    val code: String,
+    @Column(name = "code", nullable = false)
+    @field:NotBlank(message = "{course.infrastructure-key.required}")
+    @field:Size(max = 20, message = "{course.infrastructure-key.size}")
+    @field:Pattern(regexp = "^[A-Za-z0-9]+$", message = "{course.infrastructure-key.pattern}")
+    val infrastructureKey: String,
 
     @Column(nullable = false)
     val year: Int,
@@ -71,7 +71,7 @@ data class Course(
     val workspaceScope: WorkspaceScope = WorkspaceScope.COURSE,
 
     @Column(nullable = false)
-    val hwCount: Int = 10,
+    val hwCount: Int = 0,
 
     @Column(nullable = false)
     val pracEnabled: Boolean = false,
@@ -82,6 +82,9 @@ data class Course(
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     var status: CourseStatus = CourseStatus.ACTIVE,
+
+    @Column(name = "workspace_runtime_enabled", nullable = false)
+    var workspaceRuntimeEnabled: Boolean = false,
 
     @Column
     var endedAt: LocalDateTime? = null,
@@ -101,6 +104,7 @@ data class Course(
     var assignments: MutableList<Assignment> = mutableListOf()
 ) {
     companion object {
-        fun namespaceKey(code: String, clss: Int) = "jcode-${code.trim().lowercase()}-$clss"
+        fun namespaceKey(infrastructureKey: String, clss: Int) =
+            "jcode-${infrastructureKey.trim().lowercase()}-$clss"
     }
 }

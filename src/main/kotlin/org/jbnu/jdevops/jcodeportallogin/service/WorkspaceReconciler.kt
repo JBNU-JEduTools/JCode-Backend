@@ -2,6 +2,7 @@ package org.jbnu.jdevops.jcodeportallogin.service
 
 import org.jbnu.jdevops.jcodeportallogin.config.GENERATOR_SCOPE_ATTRIBUTE
 import org.jbnu.jdevops.jcodeportallogin.entity.*
+import org.jbnu.jdevops.jcodeportallogin.util.WorkspaceNaming
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.beans.factory.annotation.Value
@@ -55,7 +56,7 @@ class WorkspaceReconciler(
     private fun executeAssignment(operation: ClaimedWorkspaceOperation): Map<*, *>? {
         val assignment = operationStore.loadAssignment(operation.targetId) ?: return null
         val course = assignment.course
-        val namespace = "jcode-${course.code.lowercase()}-${course.clss}"
+        val namespace = course.namespaceKey ?: Course.namespaceKey(course.infrastructureKey, course.clss)
         when (operation.action) {
             WorkspaceOperationAction.MIGRATE_ASSIGNMENT_PATH,
             WorkspaceOperationAction.PROVISION_ASSIGNMENT -> {
@@ -70,8 +71,23 @@ class WorkspaceReconciler(
                     "course_id" to course.id,
                     "namespace" to namespace,
                     "workspace_key" to assignment.workspaceKey,
-                    "legacy_dir_name" to assignment.legacyDirName
+                    "legacy_dir_name" to assignment.legacyDirName,
+                    "display_name" to assignment.name
                 )
+                )
+            }
+            WorkspaceOperationAction.UPDATE_ASSIGNMENT_METADATA -> {
+                if (assignment.lifecycleStatus != AssignmentLifecycleStatus.ACTIVE) return skipped
+                return post(
+                    "/api/workspace/assignments/provision",
+                    "workspace:write",
+                    operation.idempotencyKey,
+                    mapOf(
+                        "course_id" to course.id,
+                        "namespace" to namespace,
+                        "workspace_key" to assignment.workspaceKey,
+                        "display_name" to assignment.name
+                    )
                 )
             }
             WorkspaceOperationAction.DISTRIBUTE_STARTER -> {
@@ -109,6 +125,7 @@ class WorkspaceReconciler(
                     "course_id" to course.id,
                     "namespace" to namespace,
                     "workspace_key" to assignment.workspaceKey,
+                    "display_name" to assignment.name,
                     "retention_days" to assignment.archiveRetentionDays,
                     "deployments" to jcodes.map { it.first },
                     "services" to jcodes.map { it.second }
@@ -128,6 +145,7 @@ class WorkspaceReconciler(
                     "course_id" to course.id,
                     "namespace" to namespace,
                     "workspace_key" to assignment.workspaceKey,
+                    "display_name" to assignment.name,
                     "retention_days" to assignment.archiveRetentionDays,
                     "deployments" to jcodes.map { it.first },
                     "services" to jcodes.map { it.second }
@@ -146,6 +164,7 @@ class WorkspaceReconciler(
                     "course_id" to course.id,
                     "namespace" to namespace,
                     "workspace_key" to assignment.workspaceKey,
+                    "display_name" to assignment.name,
                     "retention_days" to assignment.archiveRetentionDays,
                     "starter_artifact_key" to starter?.artifactKey,
                     "starter_checksum" to starter?.checksum,
@@ -160,7 +179,7 @@ class WorkspaceReconciler(
     private fun executeMembership(operation: ClaimedWorkspaceOperation): Map<*, *>? {
         val membership = operationStore.loadMembership(operation.targetId) ?: return null
         val course = membership.course
-        val namespace = "jcode-${course.code.lowercase()}-${course.clss}"
+        val namespace = course.namespaceKey ?: Course.namespaceKey(course.infrastructureKey, course.clss)
         val jcodeNames = operationStore.loadMembershipJcodes(membership.id)
         return when (operation.action) {
             WorkspaceOperationAction.PROVISION_MEMBERSHIP -> if (membership.lifecycleStatus == MembershipStatus.PROVISIONING) post(
@@ -171,7 +190,9 @@ class WorkspaceReconciler(
                     "course_id" to course.id,
                     "namespace" to namespace,
                     "student_num" to membership.user.studentNum.toString(),
+                    "display_name" to WorkspaceNaming.displayName(membership.user),
                     "workspace_keys" to operationStore.loadActiveAssignmentKeys(course.id),
+                    "workspace_labels" to operationStore.loadActiveAssignmentLabels(course.id),
                     "artifacts" to operationStore.loadLatestCourseArtifacts(course.id).map {
                         mapOf(
                             "workspace_key" to it.assignment.workspaceKey,
@@ -206,12 +227,15 @@ class WorkspaceReconciler(
     private fun executeJcode(operation: ClaimedWorkspaceOperation): Map<*, *>? {
         val jcode = operationStore.loadJcode(operation.targetId) ?: return null
         val course = jcode.course
-        val namespace = "jcode-${course.code.lowercase()}-${course.clss}"
+        val namespace = course.namespaceKey ?: Course.namespaceKey(course.infrastructureKey, course.clss)
         return when (operation.action) {
             WorkspaceOperationAction.PROVISION_JCODE -> if (
                 jcode.lifecycleStatus == JcodeLifecycleStatus.PROVISIONING &&
                 jcode.userCourse.lifecycleStatus == MembershipStatus.READY
             ) {
+                if (course.status != CourseStatus.ACTIVE || !course.workspaceRuntimeEnabled) {
+                    throw WorkspaceProvisioningPendingException()
+                }
                 val provisioned = post(
                     "/api/jcode",
                     "jcode:write",
@@ -223,8 +247,8 @@ class WorkspaceReconciler(
                         "service_name" to jcode.serviceName,
                         "app_label" to jcode.deploymentName,
                         "file_path" to if (jcode.snapshot) {
-                            "${course.code.lowercase()}-${course.clss}"
-                        } else "workspace/${course.code.lowercase()}-${course.clss}-${jcode.user.studentNum}",
+                            "${course.infrastructureKey.lowercase()}-${course.clss}"
+                        } else "workspace/${course.infrastructureKey.lowercase()}-${course.clss}-${jcode.user.studentNum}",
                         "student_num" to jcode.user.studentNum.toString(),
                         "use_vnc" to course.useVnc,
                         "environment_profile" to course.environmentProfile.name,
@@ -234,12 +258,16 @@ class WorkspaceReconciler(
                         "egress_policy" to course.egressPolicy.name,
                         "workspace_scope" to course.workspaceScope.name,
                         "assignment_workspace_key" to jcode.assignment?.workspaceKey,
+                        "workspace_display_name" to WorkspaceNaming.displayName(jcode.user),
                         "use_snapshot" to jcode.snapshot,
                         "hw_count" to course.hwCount,
                         "prac_count" to if (course.pracEnabled) course.pracCount else 0,
                         "assignment_dirs" to if (course.workspaceScope == WorkspaceScope.COURSE) {
                             operationStore.loadActiveAssignmentKeys(course.id)
-                        } else emptyList<String>()
+                        } else emptyList<String>(),
+                        "assignment_labels" to if (course.workspaceScope == WorkspaceScope.COURSE) {
+                            operationStore.loadActiveAssignmentLabels(course.id)
+                        } else emptyMap<String, String>()
                     )
                 )
                 val readiness = getJcodeReadiness(

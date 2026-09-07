@@ -52,7 +52,7 @@ class CourseInfrastructureReconciler(
     }
 
     private fun execute(operation: ClaimedCourseInfrastructureOperation, course: Course) {
-        val namespace = "jcode-${course.code.lowercase()}-${course.clss}"
+        val namespace = course.namespaceKey ?: Course.namespaceKey(course.infrastructureKey, course.clss)
         when (operation.action) {
             CourseInfrastructureAction.PROVISION_NAMESPACE -> bootstrapClient.post()
                 .uri("/api/namespace")
@@ -62,6 +62,11 @@ class CourseInfrastructureReconciler(
                 .bodyValue(mapOf(
                     "course_id" to course.id,
                     "namespace" to namespace,
+                    "course_name" to course.name,
+                    "professor_name" to course.professor,
+                    "year" to course.year,
+                    "term" to course.term,
+                    "class_section" to course.clss,
                     "environment_profile" to course.environmentProfile.name,
                     "use_vnc" to course.useVnc,
                     "use_jupyter" to course.useJupyter,
@@ -69,6 +74,24 @@ class CourseInfrastructureReconciler(
                     "resource_profile" to course.resourceProfile.name,
                     "egress_policy" to course.egressPolicy.name,
                     "workspace_scope" to course.workspaceScope.name
+                ))
+                .retrieve()
+                .bodyToMono(Map::class.java)
+                .timeout(Duration.ofSeconds(requestTimeoutSeconds))
+                .block()
+
+            CourseInfrastructureAction.SYNC_NAMESPACE_METADATA -> bootstrapClient.put()
+                .uri("/api/namespace/$namespace/metadata")
+                .attribute(GENERATOR_SCOPE_ATTRIBUTE, "namespace:write")
+                .header("Idempotency-Key", operation.idempotencyKey)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(mapOf(
+                    "course_id" to course.id,
+                    "course_name" to course.name,
+                    "professor_name" to course.professor,
+                    "year" to course.year,
+                    "term" to course.term,
+                    "class_section" to course.clss
                 ))
                 .retrieve()
                 .bodyToMono(Map::class.java)

@@ -1,5 +1,5 @@
 # ---------- Build Stage ----------
-FROM gradle:8.8-jdk21 AS build
+FROM docker.io/library/gradle:8.8-jdk21 AS build
 WORKDIR /app
 
 # 전체 프로젝트 소스 복사
@@ -11,7 +11,7 @@ RUN gradle clean build -x test --no-daemon \
     -Pkotlin.compiler.execution.strategy=in-process
 
 # ---------- Run Stage ----------
-FROM eclipse-temurin:21-jre-jammy
+FROM docker.io/library/eclipse-temurin:21-jre-jammy
 WORKDIR /app
 
 # 배포 환경 설정 (prod)

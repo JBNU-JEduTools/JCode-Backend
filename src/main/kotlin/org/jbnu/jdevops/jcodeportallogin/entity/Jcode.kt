@@ -6,6 +6,7 @@ import java.time.LocalDateTime
 
 enum class JcodeKind { STANDARD, SNAPSHOT }
 enum class JcodeLifecycleStatus { PROVISIONING, PROVISION_FAILED, READY, DELETE_PENDING, DELETE_FAILED, ARCHIVED }
+enum class JcodeObservedStatus { UNKNOWN, READY, NOT_READY, MISSING, FAILED, DRIFTED }
 
 @Entity
 @Table(name = "jcode")
@@ -48,9 +49,9 @@ data class Jcode(
 
     @Column(name = "deployment_name", nullable = false, length = 63)
     val deploymentName: String = if (snapshot) {
-        "jcode-snapshot-${course.code.lowercase()}-${user.studentNum}"
+        "jcode-snapshot-${course.infrastructureKey.lowercase()}-${user.studentNum}"
     } else {
-        "jcode-${course.code.lowercase()}-${course.clss}-${user.studentNum}"
+        "jcode-${course.infrastructureKey.lowercase()}-${course.clss}-${user.studentNum}"
     },
 
     @Column(name = "service_name", nullable = false, length = 63)
@@ -58,6 +59,16 @@ data class Jcode(
 
     @Column(name = "last_error", columnDefinition = "TEXT")
     var lastError: String? = null,
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "observed_status", nullable = false, length = 24)
+    var observedStatus: JcodeObservedStatus = JcodeObservedStatus.UNKNOWN,
+
+    @Column(name = "observed_reason", length = 128)
+    var observedReason: String? = null,
+
+    @Column(name = "last_observed_at")
+    var lastObservedAt: LocalDateTime? = null,
 
     @Column(name = "archived_at")
     var archivedAt: LocalDateTime? = null,

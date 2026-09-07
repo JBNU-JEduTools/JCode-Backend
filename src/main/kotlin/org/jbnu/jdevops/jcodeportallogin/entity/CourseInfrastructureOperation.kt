@@ -13,6 +13,7 @@ import java.util.UUID
 
 enum class CourseInfrastructureAction {
     PROVISION_NAMESPACE,
+    SYNC_NAMESPACE_METADATA,
     DELETE_WORKLOADS,
     DELETE_NAMESPACE
 }

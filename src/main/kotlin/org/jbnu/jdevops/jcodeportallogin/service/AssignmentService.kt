@@ -26,6 +26,7 @@ class AssignmentService(
     private val starterArtifactRepository: StarterArtifactRepository,
     private val jCodeRepository: JCodeRepository,
     private val workspaceOperationStore: WorkspaceOperationStore,
+    private val redisService: RedisService,
     @Qualifier("generatorWorkspaceWebClient") private val generatorWebClient: WebClient
 ) {
     private fun validateAssignmentAuthority(courseId: Long, email: String) {
@@ -73,6 +74,7 @@ class AssignmentService(
                 jcode.lifecycleStatus = JcodeLifecycleStatus.DELETE_PENDING
                 jcode.lastError = null
                 jCodeRepository.save(jcode)
+                redisService.deleteJcodeRoute(jcode.id)
                 workspaceOperationStore.enqueue(
                     WorkspaceOperationTarget.JCODE, jcode.id, WorkspaceOperationAction.DELETE_JCODE
                 )
@@ -163,6 +165,9 @@ class AssignmentService(
             updatedAt = LocalDateTime.now()
         )
         val saved = assignmentRepository.save(updated)
+        workspaceOperationStore.enqueue(
+            WorkspaceOperationTarget.ASSIGNMENT, saved.id, WorkspaceOperationAction.UPDATE_ASSIGNMENT_METADATA
+        )
         if (assignment.scheduleStatus != AssignmentScheduleStatus.CLOSED && requestedSchedule == AssignmentScheduleStatus.CLOSED) {
             closeAssignmentJcodes(saved.id)
             workspaceOperationStore.enqueue(
@@ -206,7 +211,7 @@ class AssignmentService(
                 .contentType(MediaType.MULTIPART_FORM_DATA)
                 .bodyValue(LinkedMultiValueMap<String, Any>().apply {
                     add("course_id", course.id)
-                    add("namespace", "jcode-${course.code.lowercase()}-${course.clss}")
+                    add("namespace", course.namespaceKey ?: Course.namespaceKey(course.infrastructureKey, course.clss))
                     add("assignment_id", assignment.id)
                     add("version", version)
                     add("artifact_key", artifact.artifactKey)
@@ -303,8 +308,10 @@ class AssignmentService(
     @Transactional
     fun refreshScheduleStatuses() {
         val now = LocalDateTime.now()
-        assignmentRepository.findAll().forEach { assignment ->
-            if (assignment.lifecycleStatus in setOf(AssignmentLifecycleStatus.DELETING, AssignmentLifecycleStatus.ARCHIVED)) return@forEach
+        assignmentRepository.findSchedulableForUpdate(
+            CourseStatus.ACTIVE,
+            AssignmentLifecycleStatus.ACTIVE
+        ).forEach { assignment ->
             val expected = when {
                 now.isBefore(assignment.kickoffDate) -> AssignmentScheduleStatus.SCHEDULED
                 now.isAfter(assignment.deadlineDate) -> AssignmentScheduleStatus.CLOSED

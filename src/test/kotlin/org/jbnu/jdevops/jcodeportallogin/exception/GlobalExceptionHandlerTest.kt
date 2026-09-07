@@ -7,10 +7,27 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.springframework.http.HttpStatus
 import org.springframework.mock.web.MockHttpServletRequest
+import org.springframework.http.converter.HttpMessageNotReadableException
+import org.springframework.mock.http.MockHttpInputMessage
 import org.springframework.web.server.ResponseStatusException
 
 class GlobalExceptionHandlerTest {
     private val handler = GlobalExceptionHandler()
+
+    @Test
+    fun `unreadable request body is returned as sanitized bad request`() {
+        val request = MockHttpServletRequest("POST", "/api/courses")
+
+        val response = handler.handleUnreadableMessage(
+            HttpMessageNotReadableException("internal enum parser detail", MockHttpInputMessage(byteArrayOf())),
+            request
+        )
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.statusCode)
+        assertEquals("INVALID_REQUEST_BODY", response.body?.code)
+        assertEquals("입력 정보를 확인해주세요.", response.body?.message)
+        assertFalse(response.body?.message.orEmpty().contains("enum parser"))
+    }
 
     @Test
     fun `server exception detail is not returned to client`() {

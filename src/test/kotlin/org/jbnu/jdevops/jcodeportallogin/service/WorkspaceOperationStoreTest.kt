@@ -4,6 +4,7 @@ import org.jbnu.jdevops.jcodeportallogin.entity.*
 import org.jbnu.jdevops.jcodeportallogin.repo.*
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertThrows
 import org.mockito.ArgumentCaptor
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.times
@@ -107,6 +108,29 @@ class WorkspaceOperationStoreTest {
         assertEquals(null, stored.lockedAt)
     }
 
+    @Test
+    fun `final archive completion cannot be recorded while assignment is open`() {
+        val assignment = assignment().also {
+            it.lifecycleStatus = AssignmentLifecycleStatus.ACTIVE
+            it.scheduleStatus = AssignmentScheduleStatus.OPEN
+        }
+        val stored = operation(
+            13,
+            WorkspaceOperationTarget.ASSIGNMENT,
+            assignment.id,
+            WorkspaceOperationAction.ARCHIVE_FINAL_SUBMISSION
+        )
+        `when`(operationRepository.findById(stored.id)).thenReturn(Optional.of(stored))
+        `when`(assignmentRepository.findById(assignment.id)).thenReturn(Optional.of(assignment))
+
+        assertThrows<IllegalStateException> {
+            store.markSucceeded(claimed(stored), mapOf("finalized" to true))
+        }
+
+        assertEquals(WorkspaceOperationStatus.PENDING, stored.status)
+        assertEquals(null, assignment.finalizedAt)
+    }
+
     private fun claimed(operation: WorkspaceOperation) = ClaimedWorkspaceOperation(
         operation.id,
         operation.targetType,
@@ -123,7 +147,7 @@ class WorkspaceOperationStoreTest {
     private fun course() = Course(
         id = 1,
         name = "Algorithms",
-        code = "ALG",
+        infrastructureKey = "ALG",
         year = 2026,
         term = 1,
         professor = "Professor",

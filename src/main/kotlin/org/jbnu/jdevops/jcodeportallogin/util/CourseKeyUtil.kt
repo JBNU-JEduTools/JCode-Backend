@@ -9,7 +9,7 @@ class CourseKeyUtil(
     @Value("\${course.key.charset}")
     private val charset: String
 ) {
-    fun generateCourseEnrollmentCode(courseCode: String, courseClss: Int, length: Int = 10): String {
+    fun generateCourseEnrollmentCode(infrastructureKey: String, courseClss: Int, length: Int = 10): String {
 
         val random = SecureRandom()
 
@@ -18,7 +18,6 @@ class CourseKeyUtil(
             .map { charset[random.nextInt(charset.length)] }
             .joinToString("")
 
-        // courseCode, courseClss와 랜덤 문자열을 하이픈(-)으로 조합하여 반환
-        return "$courseCode-$courseClss-$randomPart"
+        return "$infrastructureKey-$courseClss-$randomPart"
     }
 }

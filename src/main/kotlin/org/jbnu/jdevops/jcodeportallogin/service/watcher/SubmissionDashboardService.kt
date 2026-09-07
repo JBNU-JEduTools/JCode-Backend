@@ -91,7 +91,7 @@ class SubmissionDashboardService(
             throw ResponseStatusException(HttpStatus.BAD_REQUEST, "The assignment does not belong to the specified course")
         }
 
-        val classDiv = "${course.code.lowercase()}-${course.clss}"
+        val classDiv = "${course.infrastructureKey.lowercase()}-${course.clss}"
 
         // 해당 과목 학생 목록 조회
         val studentCourses = userCoursesRepository.findByCourseIdAndRole(courseId, RoleType.STUDENT)

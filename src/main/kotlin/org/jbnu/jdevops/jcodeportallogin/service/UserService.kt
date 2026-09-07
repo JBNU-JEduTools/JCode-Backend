@@ -113,16 +113,16 @@ class UserService(
         val user = userRepository.findByEmail(email)
             ?: throw IllegalArgumentException("User not found with email: $email")
 
-        val userCourses = user.courses
+        val userCourses = user.courses.filter(::isVisibleMembership)
         return userCourses.map {
             UserCoursesDto(
                 courseId = it.course.id,
                 courseName = it.course.name,
-                courseCode = it.course.code,
                 courseProfessor = it.course.professor,
                 courseClss = it.course.clss,
                 courseTerm = it.course.term,
                 courseYear = it.course.year,
+                courseRole = it.role,
                 status = it.course.status,
                 membershipStatus = it.lifecycleStatus,
                 membershipError = it.lastError?.let {
@@ -140,16 +140,17 @@ class UserService(
 
         // Repository를 사용해서 직접 ASSISTANT 역할인 강의만 조회
         val assistantCourses = userCoursesRepository.findByUserEmailAndRole(email, RoleType.ASSISTANT)
+            .filter(::isVisibleMembership)
 
         return assistantCourses.map {
             UserCoursesDto(
                 courseId = it.course.id,
                 courseName = it.course.name,
-                courseCode = it.course.code,
                 courseProfessor = it.course.professor,
                 courseClss = it.course.clss,
                 courseTerm = it.course.term,
                 courseYear = it.course.year,
+                courseRole = it.role,
                 status = it.course.status,
                 membershipStatus = it.lifecycleStatus,
                 membershipError = it.lastError?.let {
@@ -165,11 +166,16 @@ class UserService(
         val user = userRepository.findByEmail(email)
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "User not found with email: $email")
 
-        return jcodeRepository.findByUserId(user.id).map {
+        return jcodeRepository.findByUserId(user.id)
+            .filter { it.lifecycleStatus != JcodeLifecycleStatus.ARCHIVED }
+            .map {
             JCodeDto(
                 jcodeId = it.id,
                 courseName = it.course.name,
                 status = it.lifecycleStatus,
+                observedStatus = it.observedStatus,
+                observedReason = it.observedReason,
+                lastObservedAt = it.lastObservedAt,
                 jcodeUrl = it.jcodeUrl,
                 assignmentId = it.assignment?.id,
                 lastError = it.lastError?.let {
@@ -185,7 +191,9 @@ class UserService(
         val user = userRepository.findByEmail(email)
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "User not found with email: $email")
 
-        return userCoursesRepository.findByUserId(user.id).map {
+        return userCoursesRepository.findByUserId(user.id)
+            .filter(::isVisibleMembership)
+            .map {
             val assignments = assignmentRepository.findByCourseId(it.course.id)
             val jcode = jcodeRepository.findFirstByUserIdAndCourseIdAndSnapshotAndAssignmentIsNullAndLifecycleStatusNotOrderByIdDesc(
                 user.id, it.course.id, false, JcodeLifecycleStatus.ARCHIVED
@@ -194,7 +202,6 @@ class UserService(
             UserCourseDetailsDto(
                 courseId = it.course.id,
                 courseName = it.course.name,
-                courseCode = it.course.code,
                 courseProfessor = it.course.professor,
                 courseClss = it.course.clss,
                 courseTerm = it.course.term,
@@ -237,6 +244,10 @@ class UserService(
         }
     }
 
+    private fun isVisibleMembership(membership: UserCourses): Boolean =
+        membership.lifecycleStatus != MembershipStatus.ARCHIVED &&
+            membership.course.status !in setOf(CourseStatus.ENDED, CourseStatus.ARCHIVED)
+
     // 유저 강의 가입
     @Transactional
     fun joinCourse(email: String, courseKey: String): Long {
@@ -245,11 +256,10 @@ class UserService(
         if (parts.size < 3) {
             throw ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid course key format")
         }
-        val courseCode = parts[0]
+        val infrastructureKey = parts[0]
         val courseClss = parts[1].toIntOrNull() ?: throw ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid class value")
 
-        // courseCode와 courseClss를 기준으로 강의 목록 조회
-        val courses = courseRepository.findByCodeAndClss(courseCode, courseClss)
+        val courses = courseRepository.findByInfrastructureKeyAndClss(infrastructureKey, courseClss)
         if (courses.isEmpty()) {
             throw ResponseStatusException(HttpStatus.NOT_FOUND, "Course not found")
         }
@@ -271,58 +281,40 @@ class UserService(
             if (existingMembership.lifecycleStatus != MembershipStatus.ARCHIVED) {
                 throw ResponseStatusException(HttpStatus.CONFLICT, "User already enrolled in this course")
             }
-            existingMembership.role = user.role
-            existingMembership.lifecycleStatus = if (user.role == RoleType.STUDENT) {
-                MembershipStatus.PROVISIONING
-            } else {
-                MembershipStatus.READY
-            }
+            existingMembership.role = RoleType.STUDENT
+            existingMembership.lifecycleStatus = MembershipStatus.PROVISIONING
             existingMembership.archivedAt = null
             existingMembership.lastError = null
             userCoursesRepository.save(existingMembership)
-            if (user.role == RoleType.STUDENT) {
-                workspaceOperationStore.enqueue(
-                    WorkspaceOperationTarget.MEMBERSHIP,
-                    existingMembership.id,
-                    WorkspaceOperationAction.PROVISION_MEMBERSHIP
-                )
-            } else if (user.role == RoleType.PROFESSOR) {
-                redisService.addUserToCourseManagerList(course.code, course.clss, email)
-            }
+            redisService.removeUserFromCourseManagerList(course.infrastructureKey, course.clss, email)
+            workspaceOperationStore.enqueue(
+                WorkspaceOperationTarget.MEMBERSHIP,
+                existingMembership.id,
+                WorkspaceOperationAction.PROVISION_MEMBERSHIP
+            )
             return course.id
         }
 
-        // 가입 시 전역 role 사용 (ASSISTANT 전역 role 제거됨 — 수업별로만 관리)
-        val role = user.role
+        // 참가 코드는 학생으로 가입하는 경로다. 교수/조교 관계는 수업별로 별도 부여한다.
+        val role = RoleType.STUDENT
 
         // UserCourses 엔티티 저장
         val userCourse = UserCourses(
             user = user,
             course = course,
             role = role,
-            lifecycleStatus = if (role == RoleType.STUDENT) MembershipStatus.PROVISIONING else MembershipStatus.READY
+            lifecycleStatus = MembershipStatus.PROVISIONING
         )
         try { // 여러 요청이 동시에 들어와 db unique 제약조건을 위반했을 시 처리
             userCoursesRepository.saveAndFlush(userCourse)
         } catch (ex: DataIntegrityViolationException) {
             throw ResponseStatusException(HttpStatus.CONFLICT, "User already enrolled in this course")
         }
-        if (role == RoleType.STUDENT) {
-            workspaceOperationStore.enqueue(
-                WorkspaceOperationTarget.MEMBERSHIP,
-                userCourse.id,
-                WorkspaceOperationAction.PROVISION_MEMBERSHIP
-            )
-        }
-        
-        // 교수는 강의 관리자에 추가
-        if (role == RoleType.PROFESSOR) {
-            // DB 저장 후 Redis 데이터 동기화: 강의 코드와 강의 분반(clss)을 함께 사용
-            val storedUserCourse = userCoursesRepository.findByUserIdAndCourseCode(user.id, course.code)
-            if (storedUserCourse != null) {
-                redisService.addUserToCourseManagerList(course.code, course.clss, email)
-            }   
-        }
+        workspaceOperationStore.enqueue(
+            WorkspaceOperationTarget.MEMBERSHIP,
+            userCourse.id,
+            WorkspaceOperationAction.PROVISION_MEMBERSHIP
+        )
 
         // 가입한 강의의 courseId 반환
         return course.id
@@ -349,10 +341,11 @@ class UserService(
                 jcode.lifecycleStatus = JcodeLifecycleStatus.DELETE_PENDING
                 jcode.lastError = null
                 jcodeRepository.save(jcode)
+                redisService.deleteJcodeRoute(jcode.id)
             }
         }
-        redisService.deleteUserCourseAccess(email, course.code, course.clss)
-        redisService.removeUserFromCourseManagerList(course.code, course.clss, email)
+        redisService.deleteUserCourseAccess(email, course.infrastructureKey, course.clss)
+        redisService.removeUserFromCourseManagerList(course.infrastructureKey, course.clss, email)
         workspaceOperationStore.enqueue(
             WorkspaceOperationTarget.MEMBERSHIP, userCourse.id, WorkspaceOperationAction.DELETE_MEMBERSHIP
         )
@@ -415,59 +408,37 @@ class UserService(
             throw ResponseStatusException(HttpStatus.BAD_REQUEST, "ASSISTANT 권한은 특정 강의에 대해서만 설정할 수 있습니다.")
         }
 
-        when (currentUser.role) {
-            RoleType.ADMIN -> {}  // ADMIN은 모든 권한 설정 가능
-            RoleType.PROFESSOR -> {
-                if (courseId == null) throw ResponseStatusException(HttpStatus.BAD_REQUEST, "권한을 변경할 강의가 지정되지 않았습니다.")
-                val course = courseRepository.findById(courseId)
-                    .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "Course not found") }
-                // 현재 교수 사용자가 Redis에 해당 강의 관리자로 등록되어 있는지 확인
-                if (!redisService.isUserInCourseManagers(course.code, course.clss, currentUser.email)) {
-                    throw ResponseStatusException(HttpStatus.FORBIDDEN, "현재 교수로 등록되어 있지 않아 권한이 없습니다.")
-                }
-                // 수업별 권한만 변경 가능 (STUDENT ↔ ASSISTANT)
-                if (newRole !in listOf(RoleType.STUDENT, RoleType.ASSISTANT)) {
-                    throw ResponseStatusException(HttpStatus.FORBIDDEN, "PROFESSOR는 수업별 STUDENT/ASSISTANT 권한만 변경할 수 있습니다.")
-                }
-            }
-            else -> {
-                throw ResponseStatusException(HttpStatus.FORBIDDEN, "해당 권한으로는 유저 권한 변경이 불가능합니다.")
-            }
-        }
-
-        // courseId가 전달되었을 경우, 해당 강의에 대해서만 Redis 업데이트 수행
         if (courseId != null) {
+            if (currentUser.role != RoleType.ADMIN) {
+                val actorMembership = userCoursesRepository.findByUserIdAndCourseId(currentUser.id, courseId)
+                    ?: throw ResponseStatusException(HttpStatus.FORBIDDEN, "해당 강의에 소속되어 있지 않습니다.")
+                if (actorMembership.role != RoleType.PROFESSOR) {
+                    throw ResponseStatusException(HttpStatus.FORBIDDEN, "해당 강의의 담당 교수 권한이 없습니다.")
+                }
+                if (newRole !in listOf(RoleType.STUDENT, RoleType.ASSISTANT)) {
+                    throw ResponseStatusException(HttpStatus.FORBIDDEN, "교수는 해당 수업의 학생/조교 권한만 변경할 수 있습니다.")
+                }
+            }
+
             val userCourse = userCoursesRepository.findByUserIdAndCourseId(targetUser.id, courseId)
                 ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "User is not enrolled in this course")
 
             val course = userCourse.course
             // 새 역할이 ASSISTANT, PROFESSOR로 설정되었을 때는 강의의 관리자로 등록 (redis)
             if (newRole == RoleType.ASSISTANT || newRole == RoleType.PROFESSOR) {
-                redisService.addUserToCourseManagerList(course.code, course.clss, targetUser.email)
+                redisService.addUserToCourseManagerList(course.infrastructureKey, course.clss, targetUser.email)
             }
             // 새 역할이 STUDENT로 설정되었을 때는 강의의 관리자에서 등록 해제 (redis) + user_courses 엔티티의 role도 STUDENT로 업데이트
             else if (newRole == RoleType.STUDENT) {
-                redisService.removeUserFromCourseManagerList(course.code, course.clss, targetUser.email)
+                redisService.removeUserFromCourseManagerList(course.infrastructureKey, course.clss, targetUser.email)
             }
 
             userCourse.role = newRole
             userCoursesRepository.save(userCourse)
-            // 수업별 role만 변경, 전역 User.role은 변경하지 않음
         } else {
-            // courseId가 null이면 모든 가입 강의에 대해 업데이트 (STUDENT, PROFESSOR만 해당)
-            targetUser.courses.forEach { userCourse ->
-                val course = userCourse.course
-                if (newRole == RoleType.STUDENT) {
-                    redisService.removeUserFromCourseManagerList(course.code, course.clss, targetUser.email)
-                } else if (newRole == RoleType.PROFESSOR) {
-                    redisService.addUserToCourseManagerList(course.code, course.clss, targetUser.email)
-                }
-
-                userCourse.role = newRole
-                userCoursesRepository.save(userCourse)
+            if (currentUser.role != RoleType.ADMIN) {
+                throw ResponseStatusException(HttpStatus.FORBIDDEN, "전역 권한은 관리자만 변경할 수 있습니다.")
             }
-
-            // 대상 유저의 역할 업데이트 후 저장
             targetUser.role = newRole
             userRepository.save(targetUser)
         }
@@ -513,10 +484,11 @@ class UserService(
                 jcode.lifecycleStatus = JcodeLifecycleStatus.DELETE_PENDING
                 jcode.lastError = null
                 jcodeRepository.save(jcode)
+                redisService.deleteJcodeRoute(jcode.id)
             }
         }
-        redisService.deleteUserCourseAccess(user.email, course.code, course.clss)
-        redisService.removeUserFromCourseManagerList(course.code, course.clss, user.email)
+        redisService.deleteUserCourseAccess(user.email, course.infrastructureKey, course.clss)
+        redisService.removeUserFromCourseManagerList(course.infrastructureKey, course.clss, user.email)
         workspaceOperationStore.enqueue(
             WorkspaceOperationTarget.MEMBERSHIP, userCourse.id, WorkspaceOperationAction.DELETE_MEMBERSHIP
         )

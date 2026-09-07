@@ -52,8 +52,10 @@ class CourseController(
         description = "특정 강의에 등록된 모든 과제 정보를 조회합니다."
     )
     @GetMapping("/{courseId}/assignments")
-    fun getAssignmentsByCourse(@PathVariable courseId: Long): ResponseEntity<List<AssignmentDto>> {
-        return ResponseEntity.ok(courseService.getAssignmentsByCourse(courseId))
+    fun getAssignmentsByCourse(@PathVariable courseId: Long, authentication: Authentication): ResponseEntity<List<AssignmentDto>> {
+        val email = authentication.principal as? String
+            ?: throw ResponseStatusException(HttpStatus.UNAUTHORIZED, "Missing email in authentication")
+        return ResponseEntity.ok(courseService.getAssignmentsByCourse(courseId, email))
     }
 
     // 강의 key 재발급 API (ADMIN, PROFESSOR 전용)
@@ -137,7 +139,9 @@ class CourseController(
         description = "특정 강의의 상세 정보를 조회합니다."
     )
     @GetMapping("/{courseId}/details")
-    fun getCourseDetails(@PathVariable courseId: Long): ResponseEntity<UserCourseDetailsDto> {
-        return ResponseEntity.ok(courseService.getCourseDetails(courseId))
+    fun getCourseDetails(@PathVariable courseId: Long, authentication: Authentication): ResponseEntity<UserCourseDetailsDto> {
+        val email = authentication.principal as? String
+            ?: throw ResponseStatusException(HttpStatus.UNAUTHORIZED, "Missing email in authentication")
+        return ResponseEntity.ok(courseService.getCourseDetails(courseId, email))
     }
 }
