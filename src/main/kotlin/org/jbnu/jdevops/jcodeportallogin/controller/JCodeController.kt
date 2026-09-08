@@ -42,7 +42,14 @@ class JCodeController(
             throw ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid token")
         }
 
-        return ResponseEntity.ok(jCodeService.createJCode(courseId, jcodeMainRequestDto.userEmail, email, token, jcodeMainRequestDto.snapshot))
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(jCodeService.createJCode(
+            courseId,
+            jcodeMainRequestDto.userEmail,
+            email,
+            token,
+            jcodeMainRequestDto.snapshot,
+            jcodeMainRequestDto.assignmentId
+        ))
     }
 
     // JCode 삭제 (관리자 전용)
@@ -63,7 +70,25 @@ class JCodeController(
             throw ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid token")
         }
 
-        jCodeService.deleteJCode(jcodeMainRequestDto.userEmail, courseId, token, jcodeMainRequestDto.snapshot)
+        jCodeService.deleteJCode(
+            jcodeMainRequestDto.userEmail,
+            courseId,
+            token,
+            jcodeMainRequestDto.snapshot,
+            jcodeMainRequestDto.assignmentId
+        )
         return ResponseEntity.ok("JCode deleted successfully")
+    }
+
+    @PostMapping("/retry")
+    fun retryJCode(
+        @RequestBody request: JCodeMainRequestDto,
+        @PathVariable courseId: Long,
+        authentication: Authentication
+    ): ResponseEntity<Map<String, String>> {
+        val email = authentication.principal as? String
+            ?: throw ResponseStatusException(HttpStatus.UNAUTHORIZED, "Missing email in authentication")
+        jCodeService.retryJCode(email, request.userEmail, courseId, request.snapshot, request.assignmentId)
+        return ResponseEntity.accepted().body(mapOf("msg" to "JCode 작업 재시도를 요청했습니다."))
     }
 }

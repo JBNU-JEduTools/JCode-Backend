@@ -2,6 +2,7 @@ package org.jbnu.jdevops.jcodeportallogin.controller
 
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.tags.Tag
+import jakarta.validation.Valid
 import org.jbnu.jdevops.jcodeportallogin.dto.assignment.AssignmentDto
 import org.jbnu.jdevops.jcodeportallogin.dto.course.CourseDto
 import org.jbnu.jdevops.jcodeportallogin.dto.user.UserInfoDto
@@ -36,7 +37,7 @@ class CourseController(
         summary = "강의별 유저 조회",
         description = "특정 강의에 등록된 모든 사용자 정보를 조회합니다. (STUDENT 제외)"
     )
-    @PreAuthorize("hasAnyRole('ADMIN','PROFESSOR','ASSISTANT')")
+    @PreAuthorize("isAuthenticated()")
     @GetMapping("/{courseId}/users")
     fun getUsersByCourse(@PathVariable courseId: Long, authentication: Authentication): ResponseEntity<List<UserInfoDto>> {
         val email = authentication.principal as? String
@@ -51,16 +52,20 @@ class CourseController(
         description = "특정 강의에 등록된 모든 과제 정보를 조회합니다."
     )
     @GetMapping("/{courseId}/assignments")
-    fun getAssignmentsByCourse(@PathVariable courseId: Long): ResponseEntity<List<AssignmentDto>> {
-        return ResponseEntity.ok(courseService.getAssignmentsByCourse(courseId))
+    fun getAssignmentsByCourse(@PathVariable courseId: Long, authentication: Authentication): ResponseEntity<List<AssignmentDto>> {
+        val email = authentication.principal as? String
+            ?: throw ResponseStatusException(HttpStatus.UNAUTHORIZED, "Missing email in authentication")
+        return ResponseEntity.ok(courseService.getAssignmentsByCourse(courseId, email))
     }
 
     // 강의 key 재발급 API (ADMIN, PROFESSOR 전용)
     @Operation(summary = "강의 key 재발급", description = "특정 강의의 key를 재발급합니다. (ADMIN, PROFESSOR 전용)")
     @PreAuthorize("hasAnyRole('ADMIN', 'PROFESSOR')")
     @GetMapping("/{courseId}/key")
-    fun reissueCourseKey(@PathVariable courseId: Long): ResponseEntity<String> {
-        val newKey = courseService.reissueCourseKey(courseId)
+    fun reissueCourseKey(@PathVariable courseId: Long, authentication: Authentication): ResponseEntity<String> {
+        val email = authentication.principal as? String
+            ?: throw ResponseStatusException(HttpStatus.UNAUTHORIZED, "Missing email in authentication")
+        val newKey = courseService.reissueCourseKey(courseId, email)
         return ResponseEntity.ok(newKey)
     }
 
@@ -68,25 +73,64 @@ class CourseController(
     @Operation(summary = "강의 추가", description = "새로운 강의를 생성합니다. (ADMIN, PROFESSOR 전용)")
     @PreAuthorize("hasAnyRole('ADMIN', 'PROFESSOR')")
     @PostMapping
-    fun createCourse(@RequestBody courseDto: CourseDto): ResponseEntity<CourseDto> {
-        return ResponseEntity.ok(courseService.createCourse(courseDto))
+    fun createCourse(@Valid @RequestBody courseDto: CourseDto, authentication: Authentication): ResponseEntity<CourseDto> {
+        val email = authentication.principal as? String
+            ?: throw ResponseStatusException(HttpStatus.UNAUTHORIZED, "Missing email in authentication")
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(courseService.createCourse(courseDto, email))
     }
 
     // 강의 수정 (ADMIN, PROFESSOR 전용)
     @Operation(summary = "강의 수정", description = "특정 강의의 정보를 수정합니다. (ADMIN, PROFESSOR 전용)")
     @PreAuthorize("hasAnyRole('ADMIN', 'PROFESSOR')")
     @PutMapping("/{courseId}")
-    fun updateCourse(@PathVariable courseId: Long, @RequestBody courseDto: CourseDto): ResponseEntity<CourseDto> {
-        return ResponseEntity.ok(courseService.updateCourse(courseId, courseDto))
+    fun updateCourse(@PathVariable courseId: Long, @Valid @RequestBody courseDto: CourseDto, authentication: Authentication): ResponseEntity<CourseDto> {
+        val email = authentication.principal as? String
+            ?: throw ResponseStatusException(HttpStatus.UNAUTHORIZED, "Missing email in authentication")
+        return ResponseEntity.ok(courseService.updateCourse(courseId, courseDto, email))
     }
 
     // 강의 삭제 (ADMIN 전용)
-    @Operation(summary = "강의 삭제", description = "특정 강의를 삭제합니다. (ADMIN 전용)")
+    @Operation(summary = "강의 생성 취소", description = "생성 중이거나 생성에 실패한 강의를 취소하고 인프라를 정리합니다. (ADMIN 전용)")
     @PreAuthorize("hasRole('ADMIN')")
     @DeleteMapping("/{courseId}")
     fun deleteCourse(@PathVariable courseId: Long): ResponseEntity<String> {
         courseService.deleteCourse(courseId)
-        return ResponseEntity.ok("Course deleted successfully")
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body("Course creation cancellation requested")
+    }
+
+    // 강의 종료 (ADMIN 전용)
+    @Operation(summary = "강의 종료", description = "강의를 종료합니다. Pod 전체 삭제, JCode 레코드 삭제. (ADMIN 전용)")
+    @PreAuthorize("hasRole('ADMIN')")
+    @PutMapping("/{courseId}/end")
+    fun endCourse(@PathVariable courseId: Long): ResponseEntity<String> {
+        courseService.endCourse(courseId)
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body("Course termination requested")
+    }
+
+    // 강의 아카이브 (ADMIN 전용)
+    @Operation(summary = "강의 아카이브", description = "종료된 강의를 아카이브합니다. NS 삭제. (ADMIN 전용)")
+    @PreAuthorize("hasRole('ADMIN')")
+    @PutMapping("/{courseId}/archive")
+    fun archiveCourse(@PathVariable courseId: Long): ResponseEntity<String> {
+        courseService.archiveCourse(courseId)
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body("Course archive requested")
+    }
+
+    // 강의 재개설 (ADMIN 전용)
+    @Operation(summary = "강의 재개설", description = "종료된 강의를 재개설합니다. NS 재생성. (ADMIN 전용)")
+    @PreAuthorize("hasRole('ADMIN')")
+    @PutMapping("/{courseId}/reopen")
+    fun reopenCourse(@PathVariable courseId: Long): ResponseEntity<String> {
+        courseService.reopenCourse(courseId)
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body("Course reopen requested")
+    }
+
+    @Operation(summary = "강의 인프라 재시도", description = "실패한 강의 인프라 작업을 다시 요청합니다. (ADMIN 전용)")
+    @PreAuthorize("hasRole('ADMIN')")
+    @PostMapping("/{courseId}/infrastructure/retry")
+    fun retryInfrastructure(@PathVariable courseId: Long): ResponseEntity<String> {
+        courseService.retryInfrastructure(courseId)
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body("Course infrastructure retry requested")
     }
 
     // 강의 상세 정보 조회
@@ -95,7 +139,9 @@ class CourseController(
         description = "특정 강의의 상세 정보를 조회합니다."
     )
     @GetMapping("/{courseId}/details")
-    fun getCourseDetails(@PathVariable courseId: Long): ResponseEntity<UserCourseDetailsDto> {
-        return ResponseEntity.ok(courseService.getCourseDetails(courseId))
+    fun getCourseDetails(@PathVariable courseId: Long, authentication: Authentication): ResponseEntity<UserCourseDetailsDto> {
+        val email = authentication.principal as? String
+            ?: throw ResponseStatusException(HttpStatus.UNAUTHORIZED, "Missing email in authentication")
+        return ResponseEntity.ok(courseService.getCourseDetails(courseId, email))
     }
 }

@@ -72,7 +72,9 @@ class AdminController(private val userService: UserService) {
         val email = authentication.principal as? String
             ?: throw ResponseStatusException(HttpStatus.UNAUTHORIZED, "Missing email in authentication")
 
-        userService.chaseOutCourse(userId, courseId, email)
+        val token = request.getHeader("Authorization")?.removePrefix("Bearer ")?.trim()
+            ?: throw ResponseStatusException(HttpStatus.UNAUTHORIZED, "Authorization token is required")
+        userService.chaseOutCourse(userId, courseId, email, token)
 
         // courseId와 메시지를 Map으로 묶어서 반환
         val response = mapOf(

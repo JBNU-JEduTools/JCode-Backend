@@ -1,8 +1,10 @@
 package org.jbnu.jdevops.jcodeportallogin.dto.usercourse
 
 import jakarta.validation.constraints.NotBlank
-import jakarta.validation.constraints.Pattern
 import jakarta.validation.constraints.Size
+import org.jbnu.jdevops.jcodeportallogin.entity.CourseStatus
+import org.jbnu.jdevops.jcodeportallogin.entity.MembershipStatus
+import org.jbnu.jdevops.jcodeportallogin.entity.RoleType
 
 data class UserCoursesDto(
     val courseId: Long,
@@ -11,16 +13,15 @@ data class UserCoursesDto(
     @field:Size(max = 100, message = "{course.name.size}")
     val courseName: String,
 
-    @field:NotBlank(message = "{course.code.required}")
-    @field:Size(max = 20, message = "{course.code.size}")
-    @field:Pattern(regexp = "^[A-Za-z0-9]+$", message = "{course.code.pattern}")
-    val courseCode: String,
-
     @field:NotBlank(message = "{professor.name.required}")
     @field:Size(max = 50, message = "{professor.name.size}")
     val courseProfessor: String,
 
     val courseYear: Int,
     val courseTerm: Int,
-    val courseClss: Int
+    val courseClss: Int,
+    val courseRole: RoleType,
+    val status: CourseStatus = CourseStatus.ACTIVE,
+    val membershipStatus: MembershipStatus = MembershipStatus.READY,
+    val membershipError: String? = null
 )

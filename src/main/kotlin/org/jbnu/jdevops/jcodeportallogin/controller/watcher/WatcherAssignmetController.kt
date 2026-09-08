@@ -26,9 +26,12 @@ class WatcherAssignmetController(private val watcherAssignmentService: WatcherAs
     @GetMapping("{assignmentId}/courses/{courseId}")
     fun getAssignmentsData(
         @PathVariable courseId: Long,        // courseId
-        @PathVariable assignmentId: Long     // assignmentId
+        @PathVariable assignmentId: Long,    // assignmentId
+        authentication: Authentication
     ): ResponseEntity<WatcherAssignmentDto> {
-        val result = watcherAssignmentService.getAssignmentsData(courseId, assignmentId)
+        val email = authentication.principal as? String
+            ?: throw ResponseStatusException(HttpStatus.UNAUTHORIZED, "Missing email in authentication")
+        val result = watcherAssignmentService.getAssignmentsData(email, courseId, assignmentId)
 
         return if (result != null) ResponseEntity.ok(result)
         else ResponseEntity.notFound().build()
@@ -66,9 +69,12 @@ class WatcherAssignmetController(private val watcherAssignmentService: WatcherAs
     @GetMapping("{assignmentId}/courses/{courseId}/logs/build")
     fun getBuildAvgData(
         @PathVariable courseId: Long,        // courseId
-        @PathVariable assignmentId: Long     // assignmentId
+        @PathVariable assignmentId: Long,    // assignmentId
+        authentication: Authentication
     ): ResponseEntity<WatcherLogAvgDto> {
-        val result = watcherAssignmentService.getBuildLogAvg(courseId, assignmentId)
+        val email = authentication.principal as? String
+            ?: throw ResponseStatusException(HttpStatus.UNAUTHORIZED, "Missing email in authentication")
+        val result = watcherAssignmentService.getBuildLogAvg(email, courseId, assignmentId)
 
         return if (result != null) ResponseEntity.ok(result)
         else ResponseEntity.notFound().build()
@@ -81,9 +87,12 @@ class WatcherAssignmetController(private val watcherAssignmentService: WatcherAs
     @GetMapping("{assignmentId}/courses/{courseId}/logs/run")
     fun getRunAvgData(
         @PathVariable courseId: Long,        // courseId
-        @PathVariable assignmentId: Long     // assignmentId
+        @PathVariable assignmentId: Long,    // assignmentId
+        authentication: Authentication
     ): ResponseEntity<WatcherLogAvgDto> {
-        val result = watcherAssignmentService.getRunLogAvg(courseId, assignmentId)
+        val email = authentication.principal as? String
+            ?: throw ResponseStatusException(HttpStatus.UNAUTHORIZED, "Missing email in authentication")
+        val result = watcherAssignmentService.getRunLogAvg(email, courseId, assignmentId)
 
         return if (result != null) ResponseEntity.ok(result)
         else ResponseEntity.notFound().build()

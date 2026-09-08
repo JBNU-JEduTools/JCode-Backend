@@ -13,6 +13,7 @@ import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.security.web.SecurityFilterChain
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter
 import org.springframework.web.cors.CorsConfiguration
+import org.springframework.http.MediaType
 
 @Configuration
 @EnableMethodSecurity
@@ -49,10 +50,23 @@ class SecurityConfig {
                 authz
                     .requestMatchers("/login", "/error", "/oauth2/**").permitAll()
                     .requestMatchers("/api/auth/signup", "/api/auth/login/basic", "/api/auth/login/oidc/success").permitAll()
+                    .requestMatchers(org.springframework.http.HttpMethod.POST, "/api/auth/refresh").permitAll()
                     .requestMatchers("/swagger-ui/**", "/v3/api-docs/**").permitAll()
-                    .requestMatchers("/actuator/prometheus").permitAll()
+                    .requestMatchers("/actuator/health", "/actuator/health/**", "/actuator/info", "/actuator/prometheus").permitAll()
                     .requestMatchers("/api/**").authenticated()
                     .anyRequest().authenticated()  // 모든 요청에 대해 인증 요구
+            }
+            .exceptionHandling { exceptions ->
+                exceptions.authenticationEntryPoint { _, response, _ ->
+                    response.status = 401
+                    response.contentType = MediaType.APPLICATION_JSON_VALUE
+                    response.writer.write("{\"error\":\"인증이 필요합니다.\"}")
+                }
+                exceptions.accessDeniedHandler { _, response, _ ->
+                    response.status = 403
+                    response.contentType = MediaType.APPLICATION_JSON_VALUE
+                    response.writer.write("{\"error\":\"접근 권한이 없습니다.\"}")
+                }
             }
             .oauth2Login { oauth2 ->
                 // 기본 성공 URL 대신 커스텀 성공 핸들러 사용

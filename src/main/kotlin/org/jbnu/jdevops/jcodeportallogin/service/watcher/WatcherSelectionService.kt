@@ -33,7 +33,7 @@ class WatcherSelectionService (
 
         AuthorizationUtil.validateUserAuthority(currentUser.role, currentUser.id, targetUser.id, course.id, userCoursesRepository)
 
-        val assignment = assignmentRepository.findById(assignmentId)
+        val assignment = assignmentRepository.findByIdAndCourseId(assignmentId, courseId)
             .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "Assignment not found") }
 
         if (assignment.course.id != course.id) {
@@ -44,14 +44,14 @@ class WatcherSelectionService (
             throw ResponseStatusException(HttpStatus.NOT_FOUND, "UserCourse not found")
         }
 
-        val classDiv = "${course.code.lowercase()}-${course.clss}"
+        val classDiv = "${course.infrastructureKey.lowercase()}-${course.clss}"
 
         return try {
             webClient.get()
                 .uri { uriBuilder ->
                     uriBuilder
                         .path("/api/{class_div}/{hw_name}/{student_num}")
-                        .build(classDiv, assignment.name, targetUser.studentNum)
+                        .build(classDiv, assignment.watcherHwName(), targetUser.studentNum)
                 }
                 .retrieve()
                 .bodyToMono(object : ParameterizedTypeReference<List<String>>() {})  // List 파싱
@@ -74,7 +74,7 @@ class WatcherSelectionService (
 
         AuthorizationUtil.validateUserAuthority(currentUser.role, currentUser.id, targetUser.id, course.id, userCoursesRepository)
 
-        val assignment = assignmentRepository.findById(assignmentId)
+        val assignment = assignmentRepository.findByIdAndCourseId(assignmentId, courseId)
             .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "Assignment not found") }
 
         if (assignment.course.id != course.id) {
@@ -85,14 +85,14 @@ class WatcherSelectionService (
             throw ResponseStatusException(HttpStatus.NOT_FOUND, "UserCourse not found")
         }
 
-        val classDiv = "${course.code.lowercase()}-${course.clss}"
+        val classDiv = "${course.infrastructureKey.lowercase()}-${course.clss}"
 
         return try {
             webClient.get()
                 .uri { uriBuilder ->
                     uriBuilder
                         .path("/api/{class_div}/{hw_name}/{student_num}/{filename}")
-                        .build(classDiv, assignment.name, targetUser.studentNum, filename)
+                        .build(classDiv, assignment.watcherHwName(), targetUser.studentNum, filename)
                 }
                 .retrieve()
                 .bodyToMono(object : ParameterizedTypeReference<List<String>>() {})  // List 파싱

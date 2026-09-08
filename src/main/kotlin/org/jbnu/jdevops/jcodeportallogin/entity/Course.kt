@@ -17,11 +17,11 @@ data class Course(
     @field:Size(max = 100, message = "{course.name.size}")
     val name: String,
 
-    @Column(nullable = false)
-    @field:NotBlank(message = "{course.code.required}")
-    @field:Size(max = 20, message = "{course.code.size}")
-    @field:Pattern(regexp = "^[A-Za-z0-9]+$", message = "{course.code.pattern}")
-    val code: String,
+    @Column(name = "code", nullable = false)
+    @field:NotBlank(message = "{course.infrastructure-key.required}")
+    @field:Size(max = 20, message = "{course.infrastructure-key.size}")
+    @field:Pattern(regexp = "^[A-Za-z0-9]+$", message = "{course.infrastructure-key.pattern}")
+    val infrastructureKey: String,
 
     @Column(nullable = false)
     val year: Int,
@@ -37,8 +37,57 @@ data class Course(
     @Column(nullable = false)
     val clss: Int,
 
+    // Non-archived courses reserve their Kubernetes namespace through this key.
+    // It is nullable so a failed duplicate record or archived history can remain.
+    @Column(name = "namespace_key", length = 63, unique = true)
+    var namespaceKey: String? = null,
+
     @Column(nullable = false)
     val vnc: Boolean,
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 24)
+    val environmentProfile: CourseEnvironmentProfile = if (vnc) CourseEnvironmentProfile.LAB else CourseEnvironmentProfile.ALGORITHM,
+
+    @Column(nullable = false)
+    val useVnc: Boolean = vnc,
+
+    @Column(nullable = false)
+    val useJupyter: Boolean = vnc,
+
+    @Column(length = 512)
+    val baseImage: String? = null,
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 24)
+    val resourceProfile: WorkspaceResourceProfile = WorkspaceResourceProfile.STANDARD,
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 24)
+    val egressPolicy: WorkspaceEgressPolicy = WorkspaceEgressPolicy.PACKAGE_PROXY,
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 24)
+    val workspaceScope: WorkspaceScope = WorkspaceScope.COURSE,
+
+    @Column(nullable = false)
+    val hwCount: Int = 0,
+
+    @Column(nullable = false)
+    val pracEnabled: Boolean = false,
+
+    @Column(nullable = false)
+    val pracCount: Int = 0,
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    var status: CourseStatus = CourseStatus.ACTIVE,
+
+    @Column(name = "workspace_runtime_enabled", nullable = false)
+    var workspaceRuntimeEnabled: Boolean = false,
+
+    @Column
+    var endedAt: LocalDateTime? = null,
 
     @Column(nullable = false)
     @field:NotBlank(message = "{course.key.required}")
@@ -53,4 +102,9 @@ data class Course(
 
     @OneToMany(mappedBy = "course", cascade = [CascadeType.ALL], orphanRemoval = true, fetch = FetchType.LAZY)
     var assignments: MutableList<Assignment> = mutableListOf()
-)
+) {
+    companion object {
+        fun namespaceKey(infrastructureKey: String, clss: Int) =
+            "jcode-${infrastructureKey.trim().lowercase()}-$clss"
+    }
+}

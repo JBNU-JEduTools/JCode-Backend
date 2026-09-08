@@ -52,8 +52,8 @@ class AuthController(
 
             response.addCookie(jwtUtil.createJwtCookie("jcodeRt", tokens["refreshToken"]!!))
             ResponseEntity.ok(mapOf("message" to "Token created"))
-        } catch (ex: Exception) {
-            ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(mapOf("error" to ex.message!!))
+        } catch (_: Exception) {
+            ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(mapOf("error" to "인증을 갱신할 수 없습니다."))
         }
     }
 
@@ -70,8 +70,8 @@ class AuthController(
 
             response.addCookie(jwtUtil.createJwtCookie("jcodeRt", tokens["refreshToken"]!!))
             ResponseEntity.ok(mapOf("message" to "Tokens refreshed"))
-        } catch (ex: Exception) {
-            ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(mapOf("error" to ex.message!!))
+        } catch (_: Exception) {
+            ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(mapOf("error" to "인증을 갱신할 수 없습니다."))
         }
     }
 }

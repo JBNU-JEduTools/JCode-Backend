@@ -4,6 +4,8 @@ import jakarta.validation.constraints.NotBlank
 import jakarta.validation.constraints.Size
 
 data class JCodeRequestDto(
+    val course_id: Long,
+
     @field:NotBlank(message = "{jcode.request.namespace.required}")
     @field:Size(max = 50, message = "Namespace must be at most {max} characters")
     val namespace: String,
@@ -29,10 +31,22 @@ data class JCodeRequestDto(
     val student_num: String,
 
     val use_vnc: Boolean,
-    val use_snapshot : Boolean
+    val environment_profile: String,
+    val use_jupyter: Boolean,
+    val base_image: String? = null,
+    val resource_profile: String,
+    val egress_policy: String,
+    val workspace_scope: String,
+    val assignment_workspace_key: String? = null,
+    val use_snapshot: Boolean,
+    val hw_count: Int = 10,
+    val prac_count: Int = 0,
+    val assignment_dirs: List<String> = emptyList()
 )
 
 data class JCodeDeleteRequestDto(
+    val course_id: Long,
+
     @field:NotBlank(message = "{jcode.delete.namespace.required}")
     @field:Size(max = 50, message = "Namespace must be at most {max} characters")
     val namespace: String,

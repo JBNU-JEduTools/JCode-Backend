@@ -1,0 +1,30 @@
+name: Backend image check
+
+on:
+  pull_request:
+    branches: [develop]
+
+permissions:
+  contents: read
+
+env:
+  HARBOR_REGISTRY: ${{ vars.HARBOR_REGISTRY || 'harbor.jedutools.io' }}
+  IMAGE: ${{ vars.HARBOR_REGISTRY || 'harbor.jedutools.io' }}/jdevops/jcode-backend
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build immutable image
+        id: image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: ${{ env.IMAGE }}:${{ github.sha }}
+          provenance: true
+          sbom: true
+      - name: Record digest
+        run: echo '${{ env.IMAGE }}@${{ steps.image.outputs.digest }}' >> "$GITHUB_STEP_SUMMARY"

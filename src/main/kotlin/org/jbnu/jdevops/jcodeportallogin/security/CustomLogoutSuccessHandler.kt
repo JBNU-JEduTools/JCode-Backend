@@ -59,7 +59,7 @@ class CustomLogoutSuccessHandler(
 
             // refresh token 블랙리스트 저장 및 redis와 쿠키에서 폐기
             redisService.addToJwtBlacklist(refreshToken, refreshTtlMillis)
-            redisService.deleteRefreshToken(email)
+            redisService.deleteRefreshTokenIfMatches(email, refreshToken)
             response.addCookie(jwtUtil.createExpiredCookie("jcodeRt"))
         } else {
             // refresh token 쿠키가 없으면 로그를 남기고 계속 진행

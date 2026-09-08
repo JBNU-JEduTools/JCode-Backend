@@ -1,0 +1,1 @@
+UPDATE user SET role = 'STUDENT' WHERE role = 'ASSISTANT';

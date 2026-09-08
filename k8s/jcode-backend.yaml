@@ -14,20 +14,48 @@ spec:
       labels:
         app: jcode-backend
     spec:
+      dnsConfig:
+        options:
+        - name: ndots
+          value: "2"
+      imagePullSecrets:
+      - name: watcher-harbor-registry-secret
       containers:
       - name: jcode-backend
-        image: jcode-backend:test
-        imagePullPolicy: IfNotPresent # local image 사용
+        image: harbor.jedutools.io/jdevops/jcode-backend:REPLACE_WITH_COMMIT_SHA
+        imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8080
         env:
         - name: SPRING_PROFILES_ACTIVE
           value: prod
+        - name: TZ
+          value: Asia/Seoul
+        - name: SPRING_JACKSON_TIME_ZONE
+          value: Asia/Seoul
         envFrom:
         - configMapRef:
             name: jcode-backend-config
         - secretRef:
             name: jcode-backend-secret
+        startupProbe:
+          httpGet:
+            path: /actuator/health/readiness
+            port: 8080
+          periodSeconds: 5
+          failureThreshold: 36
+        readinessProbe:
+          httpGet:
+            path: /actuator/health/readiness
+            port: 8080
+          periodSeconds: 10
+          failureThreshold: 3
+        livenessProbe:
+          httpGet:
+            path: /actuator/health/liveness
+            port: 8080
+          periodSeconds: 20
+          failureThreshold: 3
         resources:
           requests:
             cpu: "1"
@@ -73,7 +101,7 @@ spec:
     - ReadWriteMany
   resources:
     requests:
-      storage: 1Gi
+      storage: 10Gi
   storageClassName: longhorn
 ---
 apiVersion: monitoring.coreos.com/v1
@@ -95,4 +123,3 @@ spec:
     - port: http-metrics
       path: /actuator/prometheus  # Spring Actuator가 노출하는 엔드포인트
       interval: 30s
-

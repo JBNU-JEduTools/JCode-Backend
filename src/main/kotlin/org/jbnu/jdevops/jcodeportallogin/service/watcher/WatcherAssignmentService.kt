@@ -25,25 +25,34 @@ class WatcherAssignmentService(
     private val userRepository: UserRepository,
     private val userCoursesRepository: UserCoursesRepository
 ) {
-    fun getAssignmentsData(courseId: Long, assignmentId: Long): WatcherAssignmentDto? {
+    private fun requireMembership(email: String, courseId: Long): RoleType {
+        val user = userRepository.findByEmail(email)
+            ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "User not found")
+        if (user.role == RoleType.ADMIN) return RoleType.ADMIN
+        return userCoursesRepository.findByUserIdAndCourseId(user.id, courseId)?.role
+            ?: throw ResponseStatusException(HttpStatus.FORBIDDEN, "해당 강의에 소속되어 있지 않습니다.")
+    }
+
+    fun getAssignmentsData(email: String, courseId: Long, assignmentId: Long): WatcherAssignmentDto? {
+        requireMembership(email, courseId)
         val course = courseRepository.findById(courseId)
             .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "Course not found") }
 
-        val assignment = assignmentRepository.findById(assignmentId)
+        val assignment = assignmentRepository.findByIdAndCourseId(assignmentId, courseId)
             .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "Assignment not found") }
 
         if (assignment.course.id != course.id) {
             throw ResponseStatusException(HttpStatus.BAD_REQUEST, "The assignment does not belong to the specified course")
         }
 
-        val classDiv = "${course.code.lowercase()}-${course.clss}"
+        val classDiv = "${course.infrastructureKey.lowercase()}-${course.clss}"
 
         return try {
             webClient.get()
                 .uri { uriBuilder ->
                     uriBuilder
                         .path("/api/assignment/{class_div}/{hw_name}")
-                        .build(classDiv, assignment.name)
+                        .build(classDiv, assignment.watcherHwName())
                 }
                 .retrieve()
                 .bodyToMono(WatcherAssignmentDto::class.java)
@@ -55,51 +64,38 @@ class WatcherAssignmentService(
     }
 
     fun getAssignmentsTotalGraphData(email: String, courseId: Long, assignmentId: Long, st: LocalDateTime, end: LocalDateTime): AssingmentTotalGraphListData? {
+        val courseRole = requireMembership(email, courseId)
         val user = userRepository.findByEmail(email)
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "User not found")
 
         val course = courseRepository.findById(courseId)
             .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "Course not found") }
 
-        val assignment = assignmentRepository.findById(assignmentId)
+        val assignment = assignmentRepository.findByIdAndCourseId(assignmentId, courseId)
             .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "Assignment not found") }
 
         if (assignment.course.id != course.id) {
             throw ResponseStatusException(HttpStatus.BAD_REQUEST, "The assignment does not belong to the specified course")
         }
 
-        val classDiv = "${course.code.lowercase()}-${course.clss}"
+        val classDiv = "${course.infrastructureKey.lowercase()}-${course.clss}"
 
         return try {
             val graphData = webClient.get()
                 .uri { uriBuilder ->
                     uriBuilder
                         .path("/api/total_graph_data/{class_div}/{hw_name}/{st}/{end}")
-                        .build(classDiv, assignment.name, st, end)
+                        .build(classDiv, assignment.watcherHwName(), st, end)
                 }
                 .retrieve()
                 .bodyToMono(AssingmentTotalGraphListData::class.java)
                 .block()
 
-            // 유저의 role에 따라 반환 데이터를 달리 가공
-            when (user.role) {
-                RoleType.STUDENT -> {
-                    val totalStudents = userCoursesRepository.countUserCoursesByCourseIdAndRole(courseId, RoleType.STUDENT)
-                    modifyGraphDataForStudent(graphData, user.studentNum, totalStudents, courseId)
-                }
-                RoleType.ASSISTANT -> {
-                    // 해당 강의에서의 조교 권한 확인
-                    val userCourse = userCoursesRepository.findByUserIdAndCourseId(user.id, courseId)
-                    val totalStudents = userCoursesRepository.countUserCoursesByCourseIdAndRole(courseId, RoleType.STUDENT)
-                    if (userCourse?.role == RoleType.STUDENT) {
-                        modifyGraphDataForStudent(graphData, user.studentNum, totalStudents, courseId)
-                    } else {
-                        graphData
-                    }
-                }
-                else -> {  // ADMIN과 PROFESSOR은 전부 반환
-                    graphData
-                }
+            if (courseRole == RoleType.STUDENT) {
+                val totalStudents = userCoursesRepository.countUserCoursesByCourseIdAndRole(courseId, RoleType.STUDENT)
+                modifyGraphDataForStudent(graphData, user.studentNum, totalStudents, courseId)
+            } else {
+                graphData
             }
         } catch (ex: Exception) {
             println("Error calling external API: ${ex.message}")
@@ -148,25 +144,26 @@ class WatcherAssignmentService(
         return AssingmentTotalGraphListData(mutableList)
     }
 
-    fun getBuildLogAvg(courseId: Long, assignmentId: Long): WatcherLogAvgDto? {
+    fun getBuildLogAvg(email: String, courseId: Long, assignmentId: Long): WatcherLogAvgDto? {
+        requireMembership(email, courseId)
         val course = courseRepository.findById(courseId)
             .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "Course not found") }
 
-        val assignment = assignmentRepository.findById(assignmentId)
+        val assignment = assignmentRepository.findByIdAndCourseId(assignmentId, courseId)
             .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "Assignment not found") }
 
         if (assignment.course.id != course.id) {
             throw ResponseStatusException(HttpStatus.BAD_REQUEST, "The assignment does not belong to the specified course")
         }
 
-        val classDiv = "${course.code.lowercase()}-${course.clss}"
+        val classDiv = "${course.infrastructureKey.lowercase()}-${course.clss}"
 
         return try {
             webClient.get()
                 .uri { uriBuilder ->
                     uriBuilder
                         .path("/api/build_avg/{class_div}/{hw_name}")
-                        .build(classDiv, assignment.name)
+                        .build(classDiv, assignment.watcherHwName())
                 }
                 .retrieve()
                 .bodyToMono(WatcherLogAvgDto::class.java)
@@ -177,25 +174,26 @@ class WatcherAssignmentService(
         }
     }
 
-    fun getRunLogAvg(courseId: Long, assignmentId: Long): WatcherLogAvgDto? {
+    fun getRunLogAvg(email: String, courseId: Long, assignmentId: Long): WatcherLogAvgDto? {
+        requireMembership(email, courseId)
         val course = courseRepository.findById(courseId)
             .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "Course not found") }
 
-        val assignment = assignmentRepository.findById(assignmentId)
+        val assignment = assignmentRepository.findByIdAndCourseId(assignmentId, courseId)
             .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "Assignment not found") }
 
         if (assignment.course.id != course.id) {
             throw ResponseStatusException(HttpStatus.BAD_REQUEST, "The assignment does not belong to the specified course")
         }
 
-        val classDiv = "${course.code.lowercase()}-${course.clss}"
+        val classDiv = "${course.infrastructureKey.lowercase()}-${course.clss}"
 
         return try {
             webClient.get()
                 .uri { uriBuilder ->
                     uriBuilder
                         .path("/api/run_avg/{class_div}/{hw_name}")
-                        .build(classDiv, assignment.name)
+                        .build(classDiv, assignment.watcherHwName())
                 }
                 .retrieve()
                 .bodyToMono(WatcherLogAvgDto::class.java)

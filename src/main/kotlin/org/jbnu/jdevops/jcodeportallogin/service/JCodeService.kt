@@ -1,159 +1,171 @@
 package org.jbnu.jdevops.jcodeportallogin.service
 
-import org.jbnu.jdevops.jcodeportallogin.dto.jcode.*
-import org.jbnu.jdevops.jcodeportallogin.entity.Jcode
-import org.jbnu.jdevops.jcodeportallogin.entity.RoleType
-import org.jbnu.jdevops.jcodeportallogin.repo.JCodeRepository
-import org.jbnu.jdevops.jcodeportallogin.repo.CourseRepository
-import org.jbnu.jdevops.jcodeportallogin.repo.UserCoursesRepository
-import org.jbnu.jdevops.jcodeportallogin.repo.UserRepository
+import org.jbnu.jdevops.jcodeportallogin.dto.jcode.JCodeDto
+import org.jbnu.jdevops.jcodeportallogin.entity.*
+import org.jbnu.jdevops.jcodeportallogin.repo.*
 import org.jbnu.jdevops.jcodeportallogin.util.AuthorizationUtil
-import org.springframework.beans.factory.annotation.Qualifier
-import org.springframework.http.HttpMethod
-import org.springframework.stereotype.Service
-import org.springframework.web.reactive.function.client.WebClient
-import org.springframework.web.server.ResponseStatusException
 import org.springframework.http.HttpStatus
-import org.springframework.http.MediaType
-import org.springframework.scheduling.annotation.Async
+import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import org.springframework.web.server.ResponseStatusException
 
 @Service
 class JCodeService(
-    @Qualifier("generatorWebClient")
-    private val webClient: WebClient,
     private val jCodeRepository: JCodeRepository,
     private val courseRepository: CourseRepository,
     private val userRepository: UserRepository,
-    private val userCoursesRepository: UserCoursesRepository
+    private val userCoursesRepository: UserCoursesRepository,
+    private val assignmentRepository: AssignmentRepository,
+    private val workspaceOperationStore: WorkspaceOperationStore,
+    private val redisService: RedisService
 ) {
-    // JCode 생성
-    // transactional을 통해 master db에서 작업하도록 명시
-    // 하지만 trasaction 처리가 오래걸려 성능 저하를 유발 할 수 있어 비동기적으로 처리
-    @Async
     @Transactional
-    fun createJCode(courseId: Long, userEmail: String, email: String, token: String, snapshot: Boolean): JCodeDto {
+    fun createJCode(
+        courseId: Long,
+        userEmail: String,
+        email: String,
+        token: String,
+        snapshot: Boolean,
+        assignmentId: Long? = null
+    ): JCodeDto {
         val course = courseRepository.findById(courseId)
             .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "Course not found") }
-
-        val user = userRepository.findByEmail(email)
+        if (course.status != CourseStatus.ACTIVE) {
+            throw ResponseStatusException(HttpStatus.CONFLICT, "종료된 강의에서는 JCode를 생성할 수 없습니다.")
+        }
+        if (!course.workspaceRuntimeEnabled) {
+            throw ResponseStatusException(HttpStatus.CONFLICT, "강의 실행 환경이 아직 준비되지 않았습니다.")
+        }
+        val actor = userRepository.findByEmail(email)
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "User not found")
-
-        val targetUser = userRepository.findByEmail(userEmail)
+        val target = userRepository.findByEmail(userEmail)
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "TargetUser not found")
-        val targetUserCourse = userCoursesRepository.findByUserIdAndCourseId(targetUser.id, course.id)
+        val membership = userCoursesRepository.findByUserIdAndCourseIdForUpdate(target.id, course.id)
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "TargetUserCourse not found")
+        if (membership.lifecycleStatus != MembershipStatus.READY) {
+            throw ResponseStatusException(HttpStatus.CONFLICT, "학생 Workspace 준비가 완료되지 않았습니다.")
+        }
+        AuthorizationUtil.validateUserAuthority(actor.role, actor.id, target.id, course.id, userCoursesRepository)
+        if (snapshot) AuthorizationUtil.validateUserAuthority(actor.role, actor.id, 0, course.id, userCoursesRepository)
 
-        // 이미 JCode가 존재하는지 확인
-        val storedJcode = jCodeRepository.findByUserIdAndCourseIdAndSnapshot(targetUser.id, course.id, snapshot)
-        if (storedJcode != null) {
-            throw ResponseStatusException(HttpStatus.FORBIDDEN, "Jcode already exists")
+        val assignment = if (course.workspaceScope == WorkspaceScope.ASSIGNMENT && !snapshot) {
+            val id = assignmentId
+                ?: throw ResponseStatusException(HttpStatus.BAD_REQUEST, "과제 단위 환경은 assignmentId가 필요합니다.")
+            assignmentRepository.findByIdAndCourseId(id, course.id)
+                .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "Assignment not found in course") }
+                .also {
+                    if (it.lifecycleStatus != AssignmentLifecycleStatus.ACTIVE || it.scheduleStatus != AssignmentScheduleStatus.OPEN) {
+                        throw ResponseStatusException(HttpStatus.CONFLICT, "현재 열려 있는 과제만 IDE에 진입할 수 있습니다.")
+                    }
+                }
+        } else null
+
+        val existing = if (assignment == null) {
+            jCodeRepository.findFirstByUserIdAndCourseIdAndSnapshotAndAssignmentIsNullAndLifecycleStatusNotOrderByIdDesc(
+                target.id, course.id, snapshot, JcodeLifecycleStatus.ARCHIVED
+            )
+        } else {
+            jCodeRepository.findFirstByUserIdAndCourseIdAndSnapshotAndAssignmentIdAndLifecycleStatusNotOrderByIdDesc(
+                target.id, course.id, snapshot, assignment.id, JcodeLifecycleStatus.ARCHIVED
+            )
+        }
+        if (existing != null && existing.lifecycleStatus != JcodeLifecycleStatus.ARCHIVED) {
+            return existing.toDto()
         }
 
-        // 생성하려는 jcode 주체의 권한 검증
-        AuthorizationUtil.validateUserAuthority(user.role, user.id, targetUser.id, course.id, userCoursesRepository)
-
-        // snapshot 권한 확인 (targetUserId를 0으로 둬서 자기 자신의 스냅샷도 열람 못하게 설정)
-        var deployment_name = "jcode-${course.code.lowercase()}-${course.clss}-${targetUser.studentNum}"
-        var file_path = "workspace/${course.code.lowercase()}-${course.clss}-${targetUser.studentNum}"
-        if (snapshot) {
-            AuthorizationUtil.validateUserAuthority(user.role, user.id, 0, course.id, userCoursesRepository)
-            deployment_name = "jcode-snapshot-${course.code.lowercase()}-${targetUser.studentNum}"
-            file_path = "${course.code.lowercase()}-${course.clss}"
+        val suffix = assignment?.let { "-${it.id}" } ?: ""
+        val deploymentName = if (snapshot) {
+            "jcode-snapshot-${course.infrastructureKey.lowercase()}-${target.studentNum}$suffix"
+        } else {
+            "jcode-${course.infrastructureKey.lowercase()}-${course.clss}-${target.studentNum}$suffix"
         }
-        val app_label = deployment_name
-
-        val jcodeRequestBody = JCodeRequestDto (
-            namespace = "jcode-${course.code.lowercase()}-${course.clss}",
-            deployment_name = deployment_name,
-            service_name = deployment_name + "-svc",
-            app_label = app_label,
-            file_path = file_path,
-            student_num = targetUser.studentNum.toString(),
-            use_vnc = course.vnc,
-            use_snapshot = snapshot
-        )
-
-        // 외부 API 호출: JCode가 없으므로 쿠버네티스에 실제 JCode 생성 요청
-        val externalJcodeDto: JCodeResponseDto? = try {
-            webClient.post()
-                .uri("/api/jcode")
-                .header("Authorization", "Bearer $token")
-                .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue(jcodeRequestBody)
-                .retrieve()
-                .bodyToMono(JCodeResponseDto::class.java)
-                .block()
-        } catch (ex: Exception) {
-            println("Error calling external API: ${ex.message}")
-            null
-        }
-
-        if (externalJcodeDto == null) {
-            throw ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to create Jcode externally")
-        }
-
-        val jCode = jCodeRepository.save(
+        val jcode = jCodeRepository.saveAndFlush(
             Jcode(
-                jcodeUrl = externalJcodeDto.jcodeUrl,
+                userCourse = membership,
                 course = course,
-                user = targetUser,
-                userCourse = targetUserCourse,
+                user = target,
+                assignment = assignment,
+                instanceKey = "${membership.id}:${assignment?.id ?: 0}:$snapshot",
                 snapshot = snapshot,
+                deploymentName = deploymentName,
+                serviceName = "$deploymentName-svc",
+                lifecycleStatus = JcodeLifecycleStatus.PROVISIONING
             )
         )
-
-        return JCodeDto(
-            jcodeId = jCode.id,
-            courseName = jCode.course.name
+        workspaceOperationStore.enqueue(
+            WorkspaceOperationTarget.JCODE, jcode.id, WorkspaceOperationAction.PROVISION_JCODE
         )
+        return jcode.toDto()
     }
 
-    // JCode 삭제 (관리자 전용)
-    // transactional을 통해 master db에서 작업하도록 명시
-    // 하지만 trasaction 처리가 오래걸려 성능 저하를 유발 할 수 있어 비동기적으로 처리
-    @Async
     @Transactional
-    fun deleteJCode(userEmail: String, courseId: Long, token: String, snapshot: Boolean) {
+    fun deleteJCode(userEmail: String, courseId: Long, token: String, snapshot: Boolean, assignmentId: Long? = null) {
         val user = userRepository.findByEmail(userEmail)
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "User not found")
-        val course = courseRepository.findById(courseId)
-            .orElseThrow { ResponseStatusException(HttpStatus.NOT_FOUND, "Course not found") }
-
-        val jCode = jCodeRepository.findByUserIdAndCourseIdAndSnapshot(user.id, course.id, snapshot)
+        val jcode = if (assignmentId == null) {
+            jCodeRepository.findFirstByUserIdAndCourseIdAndSnapshotAndAssignmentIsNullAndLifecycleStatusNotOrderByIdDesc(
+                user.id, courseId, snapshot, JcodeLifecycleStatus.ARCHIVED
+            )
+        } else {
+            jCodeRepository.findFirstByUserIdAndCourseIdAndSnapshotAndAssignmentIdAndLifecycleStatusNotOrderByIdDesc(
+                user.id, courseId, snapshot, assignmentId, JcodeLifecycleStatus.ARCHIVED
+            )
+        }
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "JCode not found for the specified user and course")
-
-        // snapshot 확인
-        var deployment_name = "jcode-${course.code.lowercase()}-${course.clss}-${user.studentNum}"
-        if (snapshot) {
-            deployment_name = "jcode-snapshot-${course.code.lowercase()}-${user.studentNum}"
-        }
-
-        val jcodeRequestBody = JCodeDeleteRequestDto (
-            namespace = "jcode-${course.code.lowercase()}-${course.clss}",
-            deployment_name = deployment_name,
-            service_name = deployment_name + "-svc"
-        )
-
-        // 외부 API 호출: 쿠버네티스에 실제 JCode 삭제 요청
-        val externalJcodeDto: JCodeDeleteResponseDto? = try {
-            webClient.method(HttpMethod.DELETE)
-                .uri("/api/jcode")
-                .header("Authorization", "Bearer $token")
-                .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue(jcodeRequestBody)
-                .retrieve()
-                .bodyToMono(JCodeDeleteResponseDto::class.java)
-                .block()
-        } catch (ex: Exception) {
-            println("Error calling external API: ${ex.message}")
-            null
-        }
-
-        if (externalJcodeDto == null) {
-            throw ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to delete Jcode externally")
-        }
-
-        jCodeRepository.delete(jCode)
+        enqueueDelete(jcode)
     }
+
+    @Transactional
+    fun deleteAllJCodesForUserCourse(userCourse: UserCourses, token: String) {
+        jCodeRepository.findAllByUserCourse(userCourse).forEach(::enqueueDelete)
+    }
+
+    private fun enqueueDelete(jcode: Jcode) {
+        if (jcode.lifecycleStatus == JcodeLifecycleStatus.ARCHIVED) return
+        jcode.lifecycleStatus = JcodeLifecycleStatus.DELETE_PENDING
+        jcode.lastError = null
+        jCodeRepository.save(jcode)
+        redisService.deleteJcodeRoute(jcode.id)
+        workspaceOperationStore.enqueue(
+            WorkspaceOperationTarget.JCODE, jcode.id, WorkspaceOperationAction.DELETE_JCODE
+        )
+    }
+
+    @Transactional
+    fun retryJCode(actorEmail: String, userEmail: String, courseId: Long, snapshot: Boolean, assignmentId: Long? = null) {
+        val actor = userRepository.findByEmail(actorEmail)
+            ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "Current user not found")
+        val user = userRepository.findByEmail(userEmail)
+            ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "User not found")
+        AuthorizationUtil.validateUserAuthority(actor.role, actor.id, user.id, courseId, userCoursesRepository)
+        val jcode = if (assignmentId == null) {
+            jCodeRepository.findFirstByUserIdAndCourseIdAndSnapshotAndAssignmentIsNullAndLifecycleStatusNotOrderByIdDesc(
+                user.id, courseId, snapshot, JcodeLifecycleStatus.ARCHIVED
+            )
+        } else {
+            jCodeRepository.findFirstByUserIdAndCourseIdAndSnapshotAndAssignmentIdAndLifecycleStatusNotOrderByIdDesc(
+                user.id, courseId, snapshot, assignmentId, JcodeLifecycleStatus.ARCHIVED
+            )
+        } ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "JCode not found")
+        if (jcode.lifecycleStatus !in setOf(JcodeLifecycleStatus.PROVISION_FAILED, JcodeLifecycleStatus.DELETE_FAILED)) {
+            throw ResponseStatusException(HttpStatus.CONFLICT, "현재 JCode에 실패한 작업이 없습니다.")
+        }
+        if (!workspaceOperationStore.retry(WorkspaceOperationTarget.JCODE, jcode.id)) {
+            throw ResponseStatusException(HttpStatus.CONFLICT, "재시도할 실패 작업이 없습니다.")
+        }
+    }
+
+    private fun Jcode.toDto() = JCodeDto(
+        jcodeId = id,
+        courseName = course.name,
+        status = lifecycleStatus,
+        observedStatus = observedStatus,
+        observedReason = observedReason,
+        lastObservedAt = lastObservedAt,
+        jcodeUrl = jcodeUrl,
+        assignmentId = assignment?.id,
+        lastError = lastError?.let {
+            "JCode 환경 처리 중 오류가 발생했습니다. 잠시 후 재시도하거나 관리자에게 문의해주세요."
+        }
+    )
 }
